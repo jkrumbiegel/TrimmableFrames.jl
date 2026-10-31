@@ -83,10 +83,11 @@ function check_segment_lengths(out::Output, segments, target::Vector{Int}, i::In
     throw(ArgumentError(string(out.verb, ": column :", out.names[i], ": ", mismatch_message(segments))))
 end
 
-parent_rows(col, ::Type{C}, ::WholeFrame) where {C} = col
+parent_rows(aligned::Vector{C}, ::Int, ::WholeFrame) where {C} = aligned
 
-function parent_rows(col, ::Type{C}, groups::RowGroups) where {C}
-    return takerows(C, col, invperm(groups.rows))
+function parent_rows(aligned::Vector{C}, i::Int, groups::RowGroups) where {C}
+    aligned[i] = takerows(C, aligned[i], invperm(groups.rows))::C
+    return aligned
 end
 
 function aligned_columns(out::Output{C}, segments, target::Vector{Int}) where {C}
@@ -95,8 +96,8 @@ function aligned_columns(out::Output{C}, segments, target::Vector{Int}) where {C
     for i in eachindex(out.cols)
         check_segment_lengths(out, segments, target, i)
         shape = out.shapes[i]
-        col = shape == PER_SEGMENT ? takerows(C, out.cols[i], repeated) : out.cols[i]
-        aligned[i] = out.keeprows && shape != PARENT_ROWS ? parent_rows(col, C, segments) : col
+        aligned[i] = (shape == PER_SEGMENT ? takerows(C, out.cols[i], repeated)::C : out.cols[i])::C
+        out.keeprows && shape != PARENT_ROWS && parent_rows(aligned, i, segments)
     end
     return aligned
 end

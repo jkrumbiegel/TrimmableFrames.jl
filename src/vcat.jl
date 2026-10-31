@@ -58,8 +58,10 @@ function with_missing_position(::Type{C}, position::Int, name::Symbol) where {C}
     return target
 end
 
+@generated storable_in(::Type{T}, ::Type{S}) where {T,S} = S <: T || promote_type(S, T) === T
+
 function copy_converted!(out::Vector{T}, start::Int, col::Vector{S}) where {T,S}
-    if S <: T || promote_type(S, T) === T
+    if storable_in(T, S)
         for i in eachindex(col)
             out[start + i - 1] = col[i]
         end
@@ -76,8 +78,8 @@ struct ColumnSources{C}
     present::Vector{Bool}
 end
 
-@generated function allocate_member(::Type{C}, position::Int, n::Int) where {C}
-    branches = [:(position == $i && return Vector{$(eltype(T))}(undef, n)::C) for (i, T) in enumerate(columnmembers(C))]
+@generated function concat_as_member(position::Int, sources::ColumnSources{C}, n::Int) where {C}
+    branches = [:(position == $i && return concat_into!($T(undef, n), sources)::C) for (i, T) in enumerate(columnmembers(C))]
     return Expr(:block, branches..., :(unreachable_column()))
 end
 
@@ -92,12 +94,15 @@ function fill_gaps!(out::Vector{T}, start::Int, n::Int) where {T}
     return out
 end
 
+copy_piece!(out::Vector, ::Type{C}, piece, start::Int) where {C} =
+    splitcolumn(c -> (copy_converted!(out, start, c); nothing), C, piece)
+
 function concat_into!(out::Vector, sources::ColumnSources{C}) where {C}
     position = 1
     piece = 1
     for (present, n) in zip(sources.present, sources.lengths)
         if present
-            splitcolumn(c -> (copy_converted!(out, position, c); nothing), C, sources.pieces[piece])
+            copy_piece!(out, C, sources.pieces[piece], position)
             piece += 1
         else
             fill_gaps!(out, position, n)
@@ -109,16 +114,48 @@ end
 
 holds_missing_only(col::Vector{T}) where {T} = Missing <: T && !isempty(col) && all(ismissing, col)
 
-function concat_column(sources::ColumnSources{C}) where {C}
+function common_position(sources::ColumnSources{C}) where {C}
+    target = NO_COLUMN
+    for piece in sources.pieces
+        position = member_position(C, piece)
+        target = target == NO_COLUMN ? position : first(promotion_table(C)[target][position])
+        target == 0 && return 0
+    end
+    return target
+end
+
+function without_missing_pieces(sources::ColumnSources{C}) where {C}
+    pieces = C[]
+    present = copy(sources.present)
+    positions = findall(sources.present)
+    for (position, piece) in zip(positions, sources.pieces)
+        if splitcolumn(holds_missing_only, C, piece)::Bool
+            present[position] = false
+        else
+            push!(pieces, piece)
+        end
+    end
+    if isempty(pieces)
+        push!(pieces, first(sources.pieces))
+        present[first(positions)] = true
+    end
+    return ColumnSources{C}(sources.name, pieces, sources.lengths, present)
+end
+
+function required_position(sources::ColumnSources{C}) where {C}
     target = NO_COLUMN
     for piece in sources.pieces
         target = promoted_position(C, target, member_position(C, piece), sources.name)
     end
-    if !all(sources.present)
-        target = with_missing_position(C, target, sources.name)
+    return all(sources.present) ? target : with_missing_position(C, target, sources.name)
+end
+
+function concat_column(sources::ColumnSources{C}) where {C}
+    if common_position(sources) != 0
+        return concat_as_member(required_position(sources), sources, sum(sources.lengths))::C
     end
-    out = allocate_member(C, target, sum(sources.lengths))
-    return splitcolumn(v -> concat_into!(v, sources), C, out)::Vector
+    reduced = without_missing_pieces(sources)
+    return concat_as_member(required_position(reduced), reduced, sum(sources.lengths))::C
 end
 
 function union_names(frames::Vector{<:Frame})
@@ -177,7 +214,7 @@ function source_labels(frames::Vector{Frame{C}}, labels::AbstractVector, ::Type{
         throw(ArgumentError(string("got ", length(labels), " source labels for ", length(frames), " frames")))
     end
     values = reduce(vcat, [fill(labels[i], nrow(df)) for (i, df) in enumerate(frames)])
-    return fitcolumn(C, :vcat, name, values, false)
+    return fitcolumn(C, :vcat, name, values, false)::C
 end
 
 add_source!(names, cols, frames, ::Nothing, ::Type{C}) where {C} = nothing
@@ -186,7 +223,7 @@ function add_source!(names, cols, frames, source::Union{Symbol,AbstractString}, 
     name = Symbol(source)
     check_source_name(names, name)
     push!(names, name)
-    push!(cols, source_column(frames, name, C))
+    push!(cols, source_column(frames, name, C)::C)
     return nothing
 end
 
@@ -194,7 +231,7 @@ function add_source!(names, cols, frames, source::Pair, ::Type{C}) where {C}
     name = Symbol(source.first)
     check_source_name(names, name)
     push!(names, name)
-    push!(cols, source_labels(frames, source.second, C, name))
+    push!(cols, source_labels(frames, source.second, C, name)::C)
     return nothing
 end
 
@@ -205,22 +242,8 @@ function check_source_name(names::Vector{Symbol}, name::Symbol)
 end
 
 function column_sources(frames::Vector{Frame{C}}, name::Symbol, lengths::Vector{Int}) where {C}
-    pieces = C[]
-    present = fill(false, length(frames))
-    fallback = 0
-    for (i, df) in enumerate(frames)
-        hasproperty(df, name) || continue
-        fallback = fallback == 0 ? i : fallback
-        col = column(df, name)
-        if !(splitcolumn(holds_missing_only, C, col)::Bool)
-            push!(pieces, col)
-            present[i] = true
-        end
-    end
-    if isempty(pieces) && fallback != 0
-        push!(pieces, column(frames[fallback], name))
-        present[fallback] = true
-    end
+    present = Bool[hasproperty(df, name) for df in frames]
+    pieces = C[column(df, name) for df in frames if hasproperty(df, name)]
     return ColumnSources{C}(name, pieces, lengths, present)
 end
 
@@ -232,7 +255,7 @@ function vcat_frames(frames::Vector{Frame{C}}, cols, source) where {C}
     outcols = C[]
     lengths = Int[nrow(df) for df in kept]
     for name in names
-        push!(outcols, concat_column(column_sources(kept, name, lengths)))
+        push!(outcols, concat_column(column_sources(kept, name, lengths))::C)
     end
     add_source!(names, outcols, kept, source, C)
     return Frame{C}(names, outcols)

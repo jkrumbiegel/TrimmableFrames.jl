@@ -39,6 +39,8 @@ struct AsTable{S}
     source::S
 end
 
+struct TableTarget end
+
 function AsTable(source::AbstractVector)
     throw(ArgumentError(string(
         "AsTable([:x, :y]): a NamedTuple with run-time names cannot be compiled, ",
@@ -78,9 +80,9 @@ function joined_names(names)
     return joined
 end
 
-function default_name(names, f, renamecols::Bool)
+function default_name(names, f::F, renamecols::Bool) where {F}
     if length(names) > 3
-        prefix = string(joined_names(names[1:2]), "_etc")
+        prefix = string(joined_names((names[1], names[2])), "_etc")
     elseif isempty(names)
         renamecols || throw(ArgumentError("when renamecols=false target column name must be passed if there are no input columns"))
         return functionname(f)
@@ -140,21 +142,25 @@ function flatten_segments(results::Vector{Vector{E}}, ::Type{E}) where {E}
     return invoke(flatten_segments, Tuple{Vector{<:Any},Type{E}}, results, E)
 end
 
-function emit_vectors!(cx::Context, name::Symbol, results::Vector{R}, E::Type, narrow::Bool) where {R}
+function emit_vectors!(cx::Context, name::Symbol, results::Vector{R}, ::Type{E}, narrow::Bool) where {R,E}
     C = column_type(cx)
     values, lengths = flatten_segments(results, E)
-    col = fitcolumn(C, cx.out.verb, name, values, narrow || !isconcretetype(R))
+    col = fitcolumn(C, cx.out.verb, name, values, narrow || !isconcretetype(R))::C
     return store_transformed!(cx.out, name, col, SEGMENTED, lengths)
 end
 
 function emit_values!(cx::Context, name::Symbol, results::Vector{R}, narrow::Bool = false) where {R}
     C = column_type(cx)
-    col = fitcolumn(C, cx.out.verb, name, results, narrow || !isconcretetype(R))
+    col = fitcolumn(C, cx.out.verb, name, results, narrow || !isconcretetype(R))::C
     return store_transformed!(cx.out, name, col, PER_SEGMENT, Int[])
 end
 
+never_returns(verb::Symbol) = throw(ArgumentError(string(verb, ": the function always throws, its result has no type")))
+
 function emit!(cx::Context, name::Symbol, results::Vector{R}, narrow::Bool) where {R}
-    if R <: AbstractVector
+    if R === Union{}
+        return never_returns(cx.out.verb)
+    elseif R <: AbstractVector
         return emit_vectors!(cx, name, results, element_union(R), narrow)
     elseif typeintersect(R, AbstractVector) === Union{}
         return emit_values!(cx, name, results, narrow)
@@ -169,19 +175,21 @@ not_a_table(verb::Symbol) = throw(ArgumentError(string(
     "a vector of NamedTuples or a vector of Tuples, with a type known to the compiler",
 )))
 
-check_target_count(::Type{AsTable}, n::Int) = nothing
+check_target_count(::TableTarget, n::Int) = nothing
 function check_target_count(names::Vector{Symbol}, n::Int)
     length(names) == n && return
     throw(ArgumentError(string("got ", n, " result columns for ", length(names), " target columns")))
 end
 
-target_name(::Type{AsTable}, fieldnames::Tuple, j::Int) = fieldnames[j]
+target_name(::TableTarget, fieldnames::Tuple, j::Int) = fieldnames[j]
 target_name(names::Vector{Symbol}, fieldnames::Tuple, j::Int) = names[j]
+
+has_known_names(::Type{T}) where {T} = T <: NamedTuple && Base.unwrap_unionall(T).parameters[1] isa Tuple
 
 function row_field_names(::Type{Row}) where {Row}
     Row === Union{} && return nothing
     labels = map(columnmembers(Row)) do member
-        if member <: NamedTuple && isconcretetype(member)
+        if has_known_names(member)
             fieldnames(member)
         elseif member <: Tuple && isconcretetype(member)
             ntuple(j -> Symbol(:x, j), fieldcount(member))
@@ -192,15 +200,22 @@ end
 
 row_field_type(::Type{Row}, j::Int) where {Row} = Union{map(member -> fieldtype(member, j), columnmembers(Row))...}
 
-field_values(::Type{E}, results, j::Int, ::Val{false}) where {E} = E[r[j] for r in results]
-field_values(::Type{E}, results, j::Int, ::Val{true}) where {E} = Vector{E}[E[row[j] for row in r] for r in results]
+@generated function row_field(row, ::Val{J}, ::Type{Row}) where {J,Row}
+    branches = [:(row isa $T && return getfield(row, J)) for T in columnmembers(Row)]
+    return Expr(:block, branches..., :(unreachable_column()))
+end
+
+field_values(::Type{E}, ::Type{Row}, results, j::Val, ::Val{false}) where {E,Row} =
+    E[row_field(r, j, Row) for r in results]
+field_values(::Type{E}, ::Type{Row}, results, j::Val, ::Val{true}) where {E,Row} =
+    Vector{E}[E[row_field(row, j, Row) for row in r] for r in results]
 
 @generated function emit_fields!(cx::Context, target, results, ::Type{Row}, rows::Val, narrow::Bool) where {Row}
     labels = row_field_names(Row)
     n = length(labels)
     statements = map(1:n) do j
         E = row_field_type(Row, j)
-        values = :(field_values($E, results, $j, rows))
+        values = :(field_values($E, Row, results, Val($j), rows))
         :(emit!(cx, target_name(target, $labels, $j), $values, narrow || $(!isconcretetype(E))))
     end
     return Expr(:block, :(check_target_count(target, $n)), statements..., :(return nothing))
@@ -243,17 +258,29 @@ function emit_auto!(cx::Context, results::Vector{R}) where {R}
     if R <: Frame
         return emit_frames!(cx, results)
     elseif is_table_row(R) || (R <: AbstractVector && is_table_row(element_union(R)))
-        return emit!(cx, AsTable, results, false)
+        return emit!(cx, TableTarget(), results, false)
     elseif typeintersect(R, NamedTuple) !== Union{} && !isempty(results) && all(r -> r isa NamedTuple, results)
-        return emit_uninferred_fields!(cx, AsTable, results)
+        return emit_uninferred_fields!(cx, TableTarget(), results)
     end
     return emit!(cx, :x1, results, false)
 end
 
-resolve_target(cx::Context, names, f, ::Nothing) = default_name(names, f, cx.renamecols)
-resolve_target(cx::Context, names, f, target::Union{Symbol,AbstractString}) = Symbol(target)
-resolve_target(cx::Context, names, f, target::AbstractVector) = Symbol[Symbol(t) for t in target]
-resolve_target(cx::Context, names, f, ::Type{AsTable}) = AsTable
+resolve_target(cx::Context, names, f::F, ::Nothing) where {F} = default_name(names, f, cx.renamecols)
+resolve_target(cx::Context, names, f::F, target::Union{Symbol,AbstractString}) where {F} = Symbol(target)
+resolve_target(cx::Context, names, f::F, target::AbstractVector) where {F} = Symbol[Symbol(t) for t in target]
+resolve_target(cx::Context, names, f::F, target::TableTarget) where {F} = target
+
+struct Aggregate{F}
+    f::F
+end
+
+# Base's `reduce_empty` for this element type is a dynamic call, also in a branch for a column
+# type that never occurs.
+(a::Aggregate)(x::AbstractVector{<:Union{Missing,AbstractString}}) = throw(MethodError(a.f, (x,)))
+(a::Aggregate)(x::AbstractVector) = a.f(x)
+
+trim_safe_function(f::F) where {F} = f
+trim_safe_function(f::Union{typeof(sum),typeof(prod)}) = Aggregate(f)
 
 struct ApplyFunction{F,X,T}
     f::F
@@ -270,7 +297,7 @@ end
 function apply_columns!(cx::Context, names::NTuple{N,Symbol}, f::F, target::T) where {N,F,T}
     resolved = resolve_target(cx, names, f, target)
     indices = map(n -> columnindex(cx.df, n), names)
-    splitcolumns(ApplyFunction(f, cx, resolved), columns(cx.df), indices)
+    splitcolumns(ApplyFunction(trim_safe_function(f), cx, resolved), columns(cx.df), indices)
     return nothing
 end
 
@@ -285,7 +312,7 @@ does not compile the arities `f` does not have.
 accepts(f::F, ::Val{N}) where {F,N} = Core.Compiler.return_type(f, NTuple{N,Any}) !== Union{}
 accepts(f::ByRow, arity::Val) = accepts(f.f, arity)
 
-function too_many_sources(cx::Context, names::Vector{Symbol}, f)
+function too_many_sources(cx::Context, names::Vector{Symbol})
     n = length(names)
     if n > MAX_VECTOR_SOURCE
         throw(ArgumentError(string(
@@ -308,7 +335,7 @@ function apply_vector_source!(cx::Context, names::Vector{Symbol}, f::F, target::
     elseif n == 3 && accepts(f, Val(3))
         return apply_columns!(cx, (names[1], names[2], names[3]), f, target)
     end
-    return too_many_sources(cx, names, f)
+    return too_many_sources(cx, names)
 end
 
 source_name(df::Frame, ref::ColumnRef) = columnnames(df)[columnindex(df, ref)]
@@ -343,15 +370,15 @@ function count_proportions!(cx::Context, name::Symbol)
     return emit_values!(cx, name, Float64[segmentlength(cx.segments, g) / total for g in 1:n])
 end
 
-copied(cx::Context{C}, col) where {C} = cx.copycols ? copycolumn(C, col) : col
+copied(cx::Context{C}, col) where {C} = (cx.copycols ? copycolumn(C, col)::C : col)::C
 
 function select_plain!(cx::Context{C,S}, name::Symbol, target::Symbol) where {C,S}
     col = column(cx.df, name)
     if cx.out.keeprows
-        return store_transformed!(cx.out, target, copied(cx, col), PARENT_ROWS, Int[])
+        return store_transformed!(cx.out, target, copied(cx, col)::C, PARENT_ROWS, Int[])
     end
     lengths = Int[segmentlength(cx.segments, g) for g in 1:segmentcount(cx.segments)]
-    ordered = S === WholeFrame ? copied(cx, col) : takerows(C, col, cx.segments.rows)
+    ordered = (S === WholeFrame ? copied(cx, col)::C : takerows(C, col, cx.segments.rows)::C)::C
     return store_transformed!(cx.out, target, ordered, SEGMENTED, lengths)
 end
 
@@ -359,7 +386,7 @@ function select_many!(cx::Context{C}, names::Vector{Symbol}) where {C}
     for name in names
         name in cx.out.names && continue
         if cx.out.keeprows
-            store!(cx.out, name, copied(cx, column(cx.df, name)), PARENT_ROWS, Int[])
+            store!(cx.out, name, copied(cx, column(cx.df, name))::C, PARENT_ROWS, Int[])
         else
             select_plain!(cx, name, name)
         end
@@ -380,7 +407,7 @@ function run!(cx::Context, pairs::AbstractVector{<:Pair})
     end
 end
 
-run!(cx::Context, f::Base.Callable) = apply_frame_function!(cx, f)
+run!(cx::Context, f::F) where {F<:Base.Callable} = apply_frame_function!(cx, f)
 run!(cx::Context, ::typeof(nrow)) = count_rows!(cx, :nrow)
 run!(cx::Context, ::typeof(proprow)) = count_proportions!(cx, :proprow)
 run!(cx::Context, p::Pair{typeof(nrow)}) = count_rows!(cx, Symbol(p.second))
@@ -390,6 +417,10 @@ run!(cx::Context, p::Pair) = run_pair!(cx, p.first, p.second)
 
 run_pair!(cx::Context, source, f::F) where {F} = apply!(cx, source, f, nothing)
 run_pair!(cx::Context, source, p::Pair) = apply!(cx, source, p.first, p.second)
+function run_pair!(cx::Context, source, p::Pair{<:Any,UnionAll})
+    p.second === AsTable || throw(ArgumentError(string(cx.out.verb, ": invalid target column specification")))
+    return apply!(cx, source, p.first, TableTarget())
+end
 function run_pair!(cx::Context, source, ::Pair{<:Union{Symbol,AbstractString}})
     throw(ArgumentError(string(cx.out.verb, ": expected a function between source and target column")))
 end

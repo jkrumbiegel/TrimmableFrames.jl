@@ -188,6 +188,9 @@ end
     @test vcat(Exact(a = [1], b = ["x"]), Exact(a = [2], b = ["y"])).a == [1, 2]
     @test_throws ColumnTypeError vcat(Exact(a = [1]), Exact(a = ["x"]))
     @test_throws "vcat: column :a needs element type Union{Missing, Int64}" vcat(Exact(a = [1], b = [2]), Exact(b = [3]); cols = :union)
+    all_missing = vcat(Full(v = Union{Missing,String}[missing]), Full(v = Union{Missing,Int64}[missing]))
+    @test all_missing.v isa Vector{Union{Missing,String}}
+    @test isequal(all_missing.v, [missing, missing])
     IntsAndFloats = frametype(Int64, Float64)
     @test vcat(IntsAndFloats(a = [1]), IntsAndFloats(a = [1.5])).a == [1.0, 1.5]
 end

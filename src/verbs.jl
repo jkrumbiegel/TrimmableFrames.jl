@@ -15,15 +15,15 @@ end
 Columns and transformations of `df`, in the DataFrames mini-language. Also takes a
 [`GroupedFrame`](@ref).
 """
-function select(df::Frame, args::Vararg{Any,N}; copycols::Bool = true, renamecols::Bool = true, threads::Bool = true) where {N}
+@specialized_args function select(df::Frame, args...; copycols::Bool = true, renamecols::Bool = true, threads::Bool = true)
     return finish(manipulate(:select, df, args, true, renamecols, copycols)...)
 end
 
-function transform(df::Frame, args::Vararg{Any,N}; copycols::Bool = true, renamecols::Bool = true, threads::Bool = true) where {N}
+@specialized_args function transform(df::Frame, args...; copycols::Bool = true, renamecols::Bool = true, threads::Bool = true)
     return finish(manipulate(:transform, df, (:, args...), true, renamecols, copycols)...)
 end
 
-function combine(df::Frame, args::Vararg{Any,N}; renamecols::Bool = true, threads::Bool = true) where {N}
+@specialized_args function combine(df::Frame, args...; renamecols::Bool = true, threads::Bool = true)
     return finish(manipulate(:combine, df, args, false, renamecols, true)...)
 end
 
@@ -35,19 +35,19 @@ function replace_contents!(df::Frame{C}, result::Frame{C}) where {C}
     return df
 end
 
-function select!(df::Frame, args::Vararg{Any,N}; renamecols::Bool = true, threads::Bool = true) where {N}
+@specialized_args function select!(df::Frame, args...; renamecols::Bool = true, threads::Bool = true)
     return replace_contents!(df, select(df, args...; copycols = false, renamecols = renamecols))
 end
 
-function transform!(df::Frame, args::Vararg{Any,N}; renamecols::Bool = true, threads::Bool = true) where {N}
+@specialized_args function transform!(df::Frame, args...; renamecols::Bool = true, threads::Bool = true)
     return replace_contents!(df, transform(df, args...; copycols = false, renamecols = renamecols))
 end
 
-select(f::Base.Callable, df::Union{Frame,GroupedFrame}; kwargs...) = select(df, f; kwargs...)
-transform(f::Base.Callable, df::Union{Frame,GroupedFrame}; kwargs...) = transform(df, f; kwargs...)
-combine(f::Base.Callable, df::Union{Frame,GroupedFrame}; kwargs...) = combine(df, f; kwargs...)
-select!(f::Base.Callable, df::Frame; kwargs...) = select!(df, f; kwargs...)
-transform!(f::Base.Callable, df::Frame; kwargs...) = transform!(df, f; kwargs...)
+select(f::F, df::Union{Frame,GroupedFrame}; kwargs...) where {F<:Base.Callable} = select(df, f; kwargs...)
+transform(f::F, df::Union{Frame,GroupedFrame}; kwargs...) where {F<:Base.Callable} = transform(df, f; kwargs...)
+combine(f::F, df::Union{Frame,GroupedFrame}; kwargs...) where {F<:Base.Callable} = combine(df, f; kwargs...)
+select!(f::F, df::Frame; kwargs...) where {F<:Base.Callable} = select!(df, f; kwargs...)
+transform!(f::F, df::Frame; kwargs...) where {F<:Base.Callable} = transform!(df, f; kwargs...)
 
 function reject_dropped_rows(verb::Symbol, gd::GroupedFrame)
     if length(rowgroups(gd).rows) != nrow(parent(gd))
@@ -65,37 +65,30 @@ function manipulate(verb::Symbol, gd::GroupedFrame{C}, args::Tuple, keeprows::Bo
     return out
 end
 
-function key_columns(gd::GroupedFrame{C}, target::Vector{Int}, keeprows::Bool, copycols::Bool) where {C}
+function key_columns(gd::GroupedFrame{C}, target::Vector{Int}, keeprows::Bool) where {C}
     df = parent(gd)
     keys = groupcols(gd)
-    keeprows && return C[copycolumn(C, column(df, k)) for k in keys]
+    keeprows && return C[copycolumn(C, column(df, k))::C for k in keys]
 
     firstrows = Int[rowgroups(gd).rows[s] for s in rowgroups(gd).starts]
-    rows = Vector{Int}(undef, sum(target; init = 0))
-    position = 1
-    for (g, len) in enumerate(target)
-        for _ in 1:len
-            rows[position] = firstrows[g]
-            position += 1
-        end
-    end
-    return C[takerows(C, column(df, k), rows) for k in keys]
+    rows = firstrows[repeat_rows(target)]
+    return C[takerows(C, column(df, k), rows)::C for k in keys]
 end
 
-function check_key_column(name::Symbol, col::C, key::C, ::Type{C}) where {C}
-    if !(columnsequal(isequal, col, key, C)::Bool)
+function check_key_column(name::Symbol, aligned::Vector{C}, i::Int, keycols::Vector{C}, position::Int) where {C}
+    if !(columnsequal(isequal, aligned, i, keycols, position)::Bool)
         throw(ArgumentError(string("column :", name, " in returned data frame is not equal to grouping key :", name)))
     end
 end
 
-function finish(out::Output{C}, gd::GroupedFrame{C}, keepkeys::Bool, copycols::Bool) where {C}
+function finish(out::Output{C}, gd::GroupedFrame{C}, keepkeys::Bool) where {C}
     segments = rowgroups(gd)
     target = target_lengths(out, segments)
     aligned = aligned_columns(out, segments, target)
     keepkeys || return result_frame(out, aligned)
 
     keys = groupcols(gd)
-    keycols = key_columns(gd, target, out.keeprows, copycols)
+    keycols = key_columns(gd, target, out.keeprows)
     names = copy(keys)
     cols = copy(keycols)
     for i in eachindex(out.names)
@@ -105,7 +98,7 @@ function finish(out::Output{C}, gd::GroupedFrame{C}, keepkeys::Bool, copycols::B
             push!(names, name)
             push!(cols, aligned[i])
         else
-            check_key_column(name, aligned[i], keycols[position], C)
+            check_key_column(name, aligned, i, keycols, position)
         end
     end
     return Frame{C}(names, cols)
@@ -118,32 +111,27 @@ function restore_parent_order(result::Frame{C}, gd::GroupedFrame{C}) where {C}
     return columns_frame(result, ordered, false)
 end
 
-function select(gd::GroupedFrame, args::Vararg{Any,N}; copycols::Bool = true, keepkeys::Bool = true, renamecols::Bool = true, threads::Bool = true) where {N}
-    return finish(manipulate(:select, gd, args, true, renamecols, copycols), gd, keepkeys, copycols)
+@specialized_args function select(gd::GroupedFrame, args...; copycols::Bool = true, keepkeys::Bool = true, renamecols::Bool = true, threads::Bool = true)
+    return finish(manipulate(:select, gd, args, true, renamecols, copycols), gd, keepkeys)
 end
 
-function transform(gd::GroupedFrame, args::Vararg{Any,N}; copycols::Bool = true, keepkeys::Bool = true, renamecols::Bool = true, threads::Bool = true) where {N}
+@specialized_args function transform(gd::GroupedFrame, args...; copycols::Bool = true, keepkeys::Bool = true, renamecols::Bool = true, threads::Bool = true)
     out = manipulate(:transform, gd, (:, args...), true, renamecols, copycols)
-    return restore_parent_order(finish(out, gd, keepkeys, copycols), gd)
+    return restore_parent_order(finish(out, gd, keepkeys), gd)
 end
 
-function combine(gd::GroupedFrame, args::Vararg{Any,N}; keepkeys::Bool = true, renamecols::Bool = true, threads::Bool = true) where {N}
-    return finish(manipulate(:combine, gd, args, false, renamecols, true), gd, keepkeys, true)
+@specialized_args function combine(gd::GroupedFrame, args...; keepkeys::Bool = true, renamecols::Bool = true, threads::Bool = true)
+    return finish(manipulate(:combine, gd, args, false, renamecols, true), gd, keepkeys)
 end
 
-function select!(gd::GroupedFrame, args::Vararg{Any,N}; renamecols::Bool = true, threads::Bool = true) where {N}
+@specialized_args function select!(gd::GroupedFrame, args...; renamecols::Bool = true, threads::Bool = true)
     replace_contents!(parent(gd), select(gd, args...; copycols = false, renamecols = renamecols))
     return parent(gd)
 end
 
-function transform!(gd::GroupedFrame, args::Vararg{Any,N}; renamecols::Bool = true, threads::Bool = true) where {N}
+@specialized_args function transform!(gd::GroupedFrame, args...; renamecols::Bool = true, threads::Bool = true)
     replace_contents!(parent(gd), transform(gd, args...; copycols = false, renamecols = renamecols))
     return parent(gd)
-end
-
-struct Conditions
-    mask::Vector{Bool}
-    skipmissing::Bool
 end
 
 function bad_condition(number::Int, x)
@@ -266,13 +254,13 @@ function reject_view(view::Bool)
     view && throw(ArgumentError("subset: view=true is not supported, TrimmableFrames has no frame views"))
 end
 
-function subset(df::Frame, args::Vararg{Any,N}; skipmissing::Bool = false, view::Bool = false, threads::Bool = true) where {N}
+@specialized_args function subset(df::Frame, args...; skipmissing::Bool = false, view::Bool = false, threads::Bool = true)
     reject_view(view)
     mask = run_conditions!(df, WholeFrame(nrow(df)), fill(true, nrow(df)), skipmissing, 1, args)
     return take_frame(df, findall(mask))
 end
 
-function subset(gd::GroupedFrame, args::Vararg{Any,N}; skipmissing::Bool = false, view::Bool = false, threads::Bool = true) where {N}
+@specialized_args function subset(gd::GroupedFrame, args...; skipmissing::Bool = false, view::Bool = false, threads::Bool = true)
     reject_view(view)
     reject_dropped_rows(:subset, gd)
     df = parent(gd)
@@ -280,11 +268,11 @@ function subset(gd::GroupedFrame, args::Vararg{Any,N}; skipmissing::Bool = false
     return take_frame(df, findall(mask))
 end
 
-function subset!(df::Frame, args::Vararg{Any,N}; skipmissing::Bool = false, threads::Bool = true) where {N}
+@specialized_args function subset!(df::Frame, args...; skipmissing::Bool = false, threads::Bool = true)
     return replace_contents!(df, subset(df, args...; skipmissing = skipmissing))
 end
 
-function subset!(gd::GroupedFrame, args::Vararg{Any,N}; skipmissing::Bool = false, threads::Bool = true) where {N}
+@specialized_args function subset!(gd::GroupedFrame, args...; skipmissing::Bool = false, threads::Bool = true)
     replace_contents!(parent(gd), subset(gd, args...; skipmissing = skipmissing))
     return parent(gd)
 end

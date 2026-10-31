@@ -31,6 +31,39 @@ end
 unreachable_column() = throw(ArgumentError("value is not a member of the column union"))
 
 """
+    @specialized_args function verb(x, args...; kw...) ... end
+
+Defines `verb` once per argument count with a type parameter per argument. `args::Vararg`
+is not enough: for native code Julia widens `Function` arguments that a method only passes
+on (`:`, `nrow`, a plain `f`) to `Function`, which leaves a dynamic call. The last method
+takes any number of arguments for native use, without that guarantee.
+"""
+macro specialized_args(definition)
+    @assert definition.head === :function
+    signature, body = definition.args
+    call = signature.head === :where ? signature.args[1] : signature
+    outer = signature.head === :where ? signature.args[2:end] : Any[]
+    position = findfirst(a -> a isa Expr && a.head === :..., call.args)
+
+    methods = map(0:MAX_SPECIALIZED_ARGS) do n
+        values = [Symbol(:arg, i) for i in 1:n]
+        types = [Symbol(:Arg, i) for i in 1:n]
+        specialized = copy(call)
+        splice!(specialized.args, position, Any[:($v::$T) for (v, T) in zip(values, types)])
+        typed_body = Expr(:block, :(args = ($(values...),)), body)
+        parameters = Any[outer..., types...]
+        Expr(:function, isempty(parameters) ? specialized : Expr(:where, specialized, parameters...), typed_body)
+    end
+
+    fallback = copy(call)
+    fallback.args[position] = :(args::Vararg{Any,N})
+    fallback_method = Expr(:function, Expr(:where, fallback, outer..., :N), body)
+    return esc(Expr(:block, methods..., :(Base.@__doc__ $fallback_method)))
+end
+
+const MAX_SPECIALIZED_ARGS = 16
+
+"""
     splitcolumn(f, C, col)
 
 Calls `f` with `col` narrowed to its concrete member of the union `C`. The generated chain
@@ -115,6 +148,8 @@ copycolumn(::Type{C}, col) where {C} = splitcolumn(copy, C, col)::C
 
 columnlength(::Type{C}, col) where {C} = splitcolumn(length, C, col)::Int
 
-function columnsequal(same::F, a::C, b::C, ::Type{C}) where {F,C}
-    return splitcolumns(pair -> same(pair[1], pair[2]), C[a, b], (1, 2))::Union{Bool,Missing}
+function columnsequal(same::F, left::Vector{C}, i::Int, right::Vector{C}, j::Int) where {F,C}
+    pair = C[left[i]]
+    push!(pair, right[j])
+    return splitcolumns(columns -> same(columns[1], columns[2]), pair, (1, 2))::Union{Bool,Missing}
 end

@@ -40,12 +40,12 @@ function selectnames(df::Frame, sel::Between)
     return columnnames(df)[from:to]
 end
 
-selectnames_into!(out, df) = out
-function selectnames_into!(out, df, sel, rest...)
-    for name in selectnames(df, sel)
+selectnames_into!(out, df, ::Tuple{}) = out
+function selectnames_into!(out, df, selections::Tuple)
+    for name in selectnames(df, first(selections))
         name in out || push!(out, name)
     end
-    return selectnames_into!(out, df, rest...)
+    return selectnames_into!(out, df, Base.tail(selections))
 end
 
-selectnames(df::Frame, sel::Cols) = selectnames_into!(Symbol[], df, sel.selections...)
+selectnames(df::Frame, sel::Cols) = selectnames_into!(Symbol[], df, sel.selections)

@@ -1,6 +1,6 @@
 module TrimmableFrames
 
-export Frame, GroupedFrame, frametype, ColumnTypeError
+export Frame, GroupedFrame, frametype, columnunion, ColumnTypeError
 export ncol, nrow, proprow
 export All, AsTable, Between, ByRow, Cols, Not
 export combine, groupby, groupcols, groupindices, insertcols, insertcols!, rename, rename!

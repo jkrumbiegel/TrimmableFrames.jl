@@ -20,7 +20,8 @@ segmentrows(groups::RowGroups, g::Int) = view(groups.rows, groups.starts[g]:grou
 segmentrows(whole::WholeFrame, ::Int) = 1:whole.nrow
 
 @inline segment(::WholeFrame, col, ::Int) = col
-@inline segment(groups::RowGroups, col, g::Int) = view(col, segmentrows(groups, g))
+# `view` would call `unalias` on the row indices, whose `unaliascopy` of a view is not trim-safe.
+@inline segment(groups::RowGroups, col, g::Int) = SubArray(col, (segmentrows(groups, g),))
 
 segmenttype(::Type{WholeFrame}, ::Type{V}) where {V} = V
 segmenttype(::Type{RowGroups}, ::Type{V}) where {T,V<:Vector{T}} = SubArray{T,1,V,Tuple{GroupRows},false}
@@ -59,6 +60,13 @@ function groupkeys(gd::GroupedFrame{C}) where {C}
     return take_frame(columns_frame(parent(gd), groupcols(gd), false), firstrows)
 end
 
+function group_of!(seen::Dict{K,Int}, key::K, ngroups::Int) where {K}
+    existing = get(seen, key, 0)
+    existing != 0 && return existing, ngroups
+    seen[key] = ngroups + 1
+    return ngroups + 1, ngroups + 1
+end
+
 function refine_groups(ids::Vector{Int}, col::Vector{T}, skipmissing::Bool) where {T}
     S = nonmissingtype(T)
     seen = Dict{Tuple{Int,S},Int}()
@@ -72,13 +80,16 @@ function refine_groups(ids::Vector{Int}, col::Vector{T}, skipmissing::Bool) wher
         if id == 0 || (skipmissing && x === missing)
             refined[i] = 0
         elseif x === missing
-            refined[i] = get!(() -> (ngroups += 1), seen_missing, id)
+            refined[i], ngroups = group_of!(seen_missing, id, ngroups)
         else
-            refined[i] = get!(() -> (ngroups += 1), seen, (id, x::S))
+            refined[i], ngroups = group_of!(seen, (id, x::S), ngroups)
         end
     end
     return refined, ngroups
 end
+
+refine_by(df::Frame{C}, ids::Vector{Int}, key::Symbol, skipmissing::Bool) where {C} =
+    splitcolumn(c -> refine_groups(ids, c, skipmissing), C, column(df, key))::Tuple{Vector{Int},Int}
 
 """
     integer_pool_size(col, skipmissing)
@@ -122,12 +133,13 @@ function uses_integer_order(df::Frame{C}, keys::Vector{Symbol}, skipmissing::Boo
     return true
 end
 
+stable_order(::Type{C}, col, rows::Vector{Int}) where {C} =
+    splitcolumn(c -> sortperm(c[rows]; alg = MergeSort), C, col)::Vector{Int}
+
 function sorted_group_order(df::Frame{C}, keys::Vector{Symbol}, firstrows::Vector{Int}) where {C}
     order = collect(1:length(firstrows))
-    for key in Iterators.reverse(keys)
-        rows = firstrows[order]
-        perm = splitcolumn(c -> sortperm(c[rows]; alg = MergeSort), C, column(df, key))::Vector{Int}
-        order = order[perm]
+    for key in reverse(keys)
+        order = order[stable_order(C, column(df, key), firstrows[order])]
     end
     return order
 end
@@ -183,7 +195,7 @@ function groupby(df::Frame{C}, cols; sort::Union{Bool,Nothing} = nothing, skipmi
     ids = ones(Int, nrow(df))
     ngroups = nrow(df) == 0 ? 0 : 1
     for key in keys
-        ids, ngroups = splitcolumn(c -> refine_groups(ids, c, skipmissing), C, column(df, key))::Tuple{Vector{Int},Int}
+        ids, ngroups = refine_by(df, ids, key, skipmissing)
     end
 
     sorted = sort === true || (sort === nothing && uses_integer_order(df, keys, skipmissing))

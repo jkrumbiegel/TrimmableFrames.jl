@@ -37,6 +37,8 @@ end
     @samedf select(df, :x => (a -> a .+ 1) => :z)
     @samedf select(df, :x => (a -> a .+ 1))
     @samedf select(df, :x => sum)
+    @samedf select(df, :s => sum)
+    @samedf select(df, :x => prod)
     @samedf select(df, :x => sum => :s, :y)
     @samedf select(df, :y, :x => sum)
     @samedf select(df, :x => ByRow(a -> a + 1))
