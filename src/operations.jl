@@ -50,6 +50,44 @@ end
 
 proprow(df::Frame) = 1.0
 
+"""
+    expected_types(f, Val(N))
+
+The combinations of types `f` is expected to run for with `N` sources, as a tuple of tuples,
+or `nothing` for no restriction. Define a method to keep the syntax unchanged and compile
+only those combinations:
+
+    TrimmableFrames.expected_types(::ByRow{typeof(+)}, ::Val{2}) =
+        ((Float64, Float64), (Int64, Int64))
+
+Dispatch on `ByRow{typeof(f)}` for element types, and on `typeof(f)` for whole columns. The
+declaration holds for every use of `f` in the session. Other types throw a `ColumnTypeError`
+at run time, and a vector source skips the arities not declared.
+"""
+expected_types(f, ::Val) = nothing
+
+struct Restricted{F,S}
+    f::F
+end
+
+signature_union(signatures::Tuple) = Union{map(s -> Tuple{s...}, signatures)...}
+
+Restricted(f::F, signatures::Tuple) where {F} = Restricted{F,signature_union(signatures)}(f)
+
+restricted_error(f::F, ::Type{S}) where {F,S} =
+    throw(ColumnTypeError(string(functionname(f), " is restricted to ", typelabel(S))))
+
+@generated function (r::Restricted{F,S})(args::Vararg{Any,N}) where {F,S,N}
+    branches = [:(args isa $T && return r.f(args...)) for T in columnmembers(S)]
+    return Expr(:block, branches..., :(return restricted_error(r.f, S)))
+end
+
+restrict_with(f, ::Nothing) = f
+restrict_with(f, signatures::Tuple) = Restricted(f, signatures)
+restrict_with(f::ByRow, signatures::Tuple) = ByRow(Restricted(f.f, signatures))
+
+restrict(f::F, arity::Val) where {F} = restrict_with(f, expected_types(f, arity))
+
 struct NamedArguments{Names,F}
     f::F
 end
@@ -339,7 +377,8 @@ end
 function apply_columns!(cx::Context, names::NTuple{N,Symbol}, f::F, target::T) where {N,F,T}
     resolved = resolve_target(cx, names, f, target)
     indices = map(n -> columnindex(cx.df, n), names)
-    splitsource(ApplyFunction(trim_safe_function(f), cx, resolved), columns(cx.df), indices)
+    apply = ApplyFunction(trim_safe_function(restrict(f, Val(N))), cx, resolved)
+    splitsource(apply, columns(cx.df), indices)
     return nothing
 end
 
@@ -351,8 +390,17 @@ const MAX_VECTOR_SOURCE = 3
 Whether `f` has a method for `N` arguments. Folded by inference, so that a vector source
 does not compile the arities `f` does not have.
 """
-accepts(f::F, ::Val{N}) where {F,N} = Core.Compiler.return_type(f, NTuple{N,Any}) !== Union{}
-accepts(f::ByRow, arity::Val) = accepts(f.f, arity)
+function accepts(f::F, arity::Val) where {F}
+    declares_arity(f) && return expected_types(f, arity) !== nothing
+    return has_method(f, arity)
+end
+
+declares_arity(f::F) where {F} =
+    expected_types(f, Val(0)) !== nothing || expected_types(f, Val(1)) !== nothing ||
+    expected_types(f, Val(2)) !== nothing || expected_types(f, Val(3)) !== nothing
+
+has_method(f::F, ::Val{N}) where {F,N} = Core.Compiler.return_type(f, NTuple{N,Any}) !== Union{}
+has_method(f::ByRow, arity::Val) = has_method(f.f, arity)
 
 function too_many_sources(cx::Context, names::Vector{Symbol})
     n = length(names)

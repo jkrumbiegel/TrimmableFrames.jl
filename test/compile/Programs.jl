@@ -87,6 +87,23 @@ p_tuple_source() = render(select(source_frame(), (:qty, :flag, :price) => ByRow(
 
 p_too_many_branches() = render(select(source_frame(), (:qty, :flag) => ByRow((a, b) -> 1) => :z))
 
+number_frame() = DF(x = [1.5, 2.5], y = [0.5, 1.0], n = [1, 2], m = Union{Missing,Float64}[1.0, missing])
+
+TrimmableFrames.expected_types(::ByRow{typeof(+)}, ::Val{2}) = ((Float64, Float64), (Int64, Int64))
+TrimmableFrames.expected_types(::ByRow{typeof(>)}, ::Val{2}) = ((Float64, Float64),)
+
+missing_sum(a, b) = a + b
+TrimmableFrames.expected_types(::ByRow{typeof(missing_sum)}, ::Val{2}) = ((Union{Missing,Float64}, Union{Missing,Float64}),)
+
+float_total(x) = sum(x)
+TrimmableFrames.expected_types(::typeof(float_total), ::Val{1}) = ((AbstractVector{Float64},),)
+
+p_expected() = render(select(number_frame(), [:x, :y] => ByRow(+) => :z))
+p_expected_second() = render(select(number_frame(), (:n, :n) => ByRow(+) => :z))
+p_expected_missing() = render(select(number_frame(), [:x, :m] => ByRow(missing_sum) => :z))
+p_expected_column() = render(combine(groupby(number_frame(), :n), :x => float_total => :s))
+p_expected_subset() = render(subset(number_frame(), [:x, :y] => ByRow(>)))
+
 const SmallFrame = frametype(Int64, Float64, String, Union{Missing,Float64})
 
 small_frame() = SmallFrame(k = ["a", "b", "a"], v = [1, 2, 3], w = Union{Missing,Float64}[1.5, missing, 2.5])
@@ -128,6 +145,7 @@ p_error_missing_column() = catching(() -> render(select(source_frame(), :nope)))
 p_error_duplicate() = catching(() -> render(select(source_frame(), :qty => :q, :city => :q)))
 p_error_length() = catching(() -> render(select(source_frame(), :qty => (x -> [1, 2]) => :q)))
 p_error_subset() = catching(() -> render(subset(source_frame(), :price => ByRow(x -> x > 1.0))))
+p_error_expected() = catching(() -> render(select(number_frame(), [:x, :n] => ByRow(+) => :z)))
 p_error_vector_source() = catching(() -> render(select(source_frame(), [:qty, :price, :flag, :city] => ((a, b, c, d) -> a) => :q)))
 
 const ENTRY_POINTS = (
@@ -143,11 +161,12 @@ const ENTRY_POINTS = (
     (p_group_transform, ()), (p_group_select, ()),
     (p_subset, ()), (p_subset_missing, ()), (p_subset_group, ()),
     (p_vcat, ()), (p_vcat_union, ()), (p_vcat_source, ()),
+    (p_expected, ()), (p_expected_second, ()), (p_expected_missing, ()), (p_expected_column, ()), (p_expected_subset, ()),
     (p_vector_source_vararg, ()), (p_tuple_source, ()), (p_small_set, ()), (p_small_set_vcat, ()),
     (p_runtime_function, (0, 1, 2)),
     (p_error_vcat, ()), (p_error_vcat_missing, ()), (p_error_transform, ()), (p_error_combine, ()),
     (p_error_outside_all, ()), (p_error_missing_column, ()), (p_error_duplicate, ()),
-    (p_error_length, ()), (p_error_subset, ()), (p_error_vector_source, ()),
+    (p_error_length, ()), (p_error_subset, ()), (p_error_vector_source, ()), (p_error_expected, ()),
 )
 
 end

@@ -80,6 +80,9 @@ Each of these follows from what can be compiled without dynamic dispatch.
   views of the group's rows, as in DataFrames.
 - `sort` of `groupby` takes `true`, `false` or `nothing`, not a `NamedTuple`. `keys(gd)` is
   not implemented: `TrimmableFrames.groupkeys(gd)` returns a frame of the keys.
+- `df.x` has the type of the whole column union, so with more than a few allowed types a
+  call like `sum(df.x)` does not compile. Narrow it first, with `df.x::Vector{Float64}` or
+  `isa`, or use `combine(df, :x => sum)`, which narrows by itself.
 - `threads` is accepted and ignored: everything runs on one task. `ungroup` is not
   implemented, because it would make the return type depend on a run-time value.
 - Regular expressions are not selectors: PCRE is a C library, unavailable under WasmCodegen.
@@ -129,7 +132,7 @@ So annotate functions of several columns with the types you expect:
 (:qty, :flag) => ((a::AbstractVector{Int64}, b::AbstractVector{Bool}) -> 1)  # 1 branch
 ```
 
-Annotate the element type of a `ByRow` function, or `AbstractVector` for a whole-column one:
+For your own functions, annotate the element type of a `ByRow` function, or `AbstractVector` for a whole-column one:
 a group's column is a `SubArray`, not a `Vector`. An element annotation also matches the
 non-missing part of a `Union{Missing,T}` column, and a `Union{Missing,T}` annotation matches
 the missing part of every such column. A column that does not fit the annotation gives a
@@ -139,7 +142,22 @@ Combinations with no method do not call `f`, but the code around that call is st
 With 8 column types, a 3-column source compiled with WasmCodegen gives 267 KB with element
 annotations and 159 KB with whole-column ones (a plain one-column `select` is 120 KB). Without
 annotations it was 480 KB, in about 35 s, before this limit existed. `[:a, :b] => ByRow(+)` is
-now over the limit: use a function with annotated arguments.
+over the limit with 8 column types, unless `+` declares its types:
+
+```julia
+TrimmableFrames.expected_types(::ByRow{typeof(+)}, ::Val{2}) =
+    ((Float64, Float64), (Int64, Int64))
+
+select(df, [:x, :y] => ByRow(+) => :z)
+```
+
+`expected_types(f, Val(N))` lists the combinations of types `f` may run for with `N` sources,
+so the call stays as in DataFrames. Dispatch on `ByRow{typeof(f)}` for element types and on
+`typeof(f)` for whole columns. Each combination is exact: the declaration above excludes
+`(Float64, Int64)`, and the non-missing part of a `Union{Missing,T}` column is matched as `T`.
+Other types throw a `ColumnTypeError` at run time, natively as well. A vector source skips the
+arities a function does not declare, a tuple source does not. The declaration holds for every
+use of `f` in the session and is not applied to `AsTable` sources.
 
 `vcat` has `n^2` type pairs, of which only pairs that promote to an allowed type compile to
 copies. The others throw the `ColumnTypeError`.
@@ -148,9 +166,11 @@ copies. The others throw the `ColumnTypeError`.
 
 A trimmed executable can segfault at startup, in the dynamic call of `Base.Sys.__init__`,
 before any program code runs. The build succeeds and each executable behaves the same on every
-run, but small source changes turn the crash on or off: unrelated padding functions in `src/`
-did so for `p_vcat` compiled alone. The cause is not known. Eight plain Julia programs without
-this package did not crash. WasmCodegen output is not affected.
+run, but small source changes turn the crash on or off. Unrelated padding functions in `src/`
+did so for `p_vcat` compiled alone, and adding the integer path of `groupby` turned it off for
+the full test program, which had crashed in every build before. A passing build therefore says
+nothing about the next change. The cause is not known. Eight plain Julia programs without this
+package did not crash. WasmCodegen output is not affected.
 
 ## Tests
 
