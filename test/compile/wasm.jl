@@ -39,12 +39,14 @@ end
 
 selected() = isempty(ARGS) ? Programs.ENTRY_POINTS : filter(e -> string(nameof(e[1])) in ARGS, Programs.ENTRY_POINTS)
 
-@testset "WasmCodegen" begin
-    @testset "$(nameof(f))" for (f, args) in selected()
-        native, wasm = check_entry(f, args)
-        @test wasm == native
-    end
-    @testset "too many branches" begin
-        @test_throws "too_many_branches" compile_entry(Programs.p_too_many_branches, ())
+WasmCodegen.with_trim_patches() do _, _
+    @testset "WasmCodegen" begin
+        @testset "$(nameof(f))" for (f, args) in selected()
+            native, wasm = check_entry(f, args)
+            @test wasm == native
+        end
+        @testset "too many branches" begin
+            @test_throws "too_many_branches" compile_entry(Programs.p_too_many_branches, ())
+        end
     end
 end
