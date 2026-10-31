@@ -19,13 +19,20 @@ function render(df::Frame)
     return nrow(df) * 100 + ncol(df)
 end
 
-total(x) = sum(skipmissing(x))
+function total(x)
+    s = zero(nonmissingtype(eltype(x)))
+    for v in x
+        v === missing || (s += v)
+    end
+    return s
+end
+
 size_of(x) = length(x)
 average(x) = total(x) / length(x)
 
 p_construct() = render(DF(:a => [1, 2], "b" => ["x", "y"], :c => 1.5))
 p_construct_kw() = render(DF(a = 1:3, b = "s", c = [true, false, true]))
-p_construct_runtime() = render(DF(Symbol[Symbol("n", i) for i in 1:2], [[1, 2], [3, 4]]))
+p_construct_runtime() = render(DF(columnunion(DF)[[1, 2], ["x", "y"]], Symbol[Symbol("n", i) for i in 1:2]))
 p_construct_error() = catching(() -> render(frametype(Int64)(a = [1.5])))
 
 function p_columns()
@@ -59,7 +66,7 @@ p_combine() = render(combine(groupby(source_frame(), :city), :qty => total => :q
 p_combine_vector() = render(combine(groupby(source_frame(), :city), :qty => (x -> x .+ 1), :price => first))
 p_combine_byrow() = render(combine(groupby(source_frame(), :city), [:qty, :flag] => ByRow((q, f) -> f ? q : -q) => :signed))
 p_combine_frame_function() = render(combine(sdf -> nrow(sdf), groupby(source_frame(), :city)))
-p_combine_table() = render(combine(groupby(source_frame(), :city), :qty => (x -> (low = minimum(x), high = maximum(x))) => AsTable))
+p_combine_table() = render(combine(groupby(source_frame(), :city), :qty => (x -> (n = length(x), twice = 2 * length(x))) => AsTable))
 p_combine_ungrouped() = render(combine(source_frame(), :qty => total, :price => average))
 
 p_group_transform() = render(transform(groupby(source_frame(), :city), :qty => cumsum => :running, :qty => sum => :all, nrow))
@@ -72,6 +79,16 @@ p_subset_group() = render(subset(groupby(source_frame(), :city), :qty => x -> x 
 p_vcat() = render(vcat(DF(a = [1], b = ["x"]), DF(a = [2.5], b = ["y"])))
 p_vcat_union() = render(vcat(DF(a = [1], b = ["x"]), DF(a = Union{Missing,Int64}[2], c = [true]); cols = :union))
 p_vcat_source() = render(vcat(DF(a = [1]), DF(a = [2]); source = :from => ["l", "r"]))
+
+p_vector_source_vararg() = render(select(source_frame(), [:qty, :flag] => ByRow(+) => :z))
+p_tuple_source() = render(select(source_frame(), (:qty, :flag, :price) => ByRow((a, b, c) -> b ? Float64(a) : c) => :z))
+
+const SmallFrame = frametype(Int64, Float64, String, Union{Missing,Float64})
+
+small_frame() = SmallFrame(k = ["a", "b", "a"], v = [1, 2, 3], w = Union{Missing,Float64}[1.5, missing, 2.5])
+
+p_small_set() = render(combine(groupby(small_frame(), :k), :v => sum, :w => total => :w_total, nrow))
+p_small_set_vcat() = render(vcat(small_frame(), select(small_frame(), :k, :v, :v => ByRow(float) => :w)))
 
 const AGGREGATES = (total, size_of, average)
 
@@ -122,6 +139,7 @@ const ENTRY_POINTS = (
     (p_group_transform, ()), (p_group_select, ()),
     (p_subset, ()), (p_subset_missing, ()), (p_subset_group, ()),
     (p_vcat, ()), (p_vcat_union, ()), (p_vcat_source, ()),
+    (p_vector_source_vararg, ()), (p_tuple_source, ()), (p_small_set, ()), (p_small_set_vcat, ()),
     (p_runtime_function, (0, 1, 2)),
     (p_error_vcat, ()), (p_error_vcat_missing, ()), (p_error_transform, ()), (p_error_combine, ()),
     (p_error_outside_all, ()), (p_error_missing_column, ()), (p_error_duplicate, ()),
