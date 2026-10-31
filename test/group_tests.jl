@@ -194,3 +194,28 @@ end
     IntsAndFloats = frametype(Int64, Float64)
     @test vcat(IntsAndFloats(a = [1]), IntsAndFloats(a = [1.5])).a == [1.0, 1.5]
 end
+
+@testset "integer keys" begin
+    @test TrimmableFrames.slot_width(1, 1000, 1, 1_000_000) == 1001
+    @test TrimmableFrames.slot_width(1, 1000, 1998, 1_000_000) == 1001
+    @test TrimmableFrames.slot_width(1, 1000, 1999, 1_000_000) == 0
+    @test TrimmableFrames.slot_width(1, 10^9, 1, 1000) == 0
+    @test TrimmableFrames.slot_width(typemin(Int), typemax(Int), 1, 1000) == 0
+    @test TrimmableFrames.slot_width(typemax(UInt64), typemax(UInt64), 1, 1000) == 0
+    @test TrimmableFrames.slot_width(1, 0, 1, 1000) == 0
+
+    @same combine(groupby(DataFrame(k = [3, 1, 3, 2, 1]), :k), nrow)
+    @same combine(groupby(DataFrame(k = [-2, 5, -2, 0]), :k), nrow)
+    @same combine(groupby(DataFrame(k = [3, missing, 1, missing, 3]), :k), nrow)
+    @same combine(groupby(DataFrame(k = [3, missing, 1, missing, 3]), :k; skipmissing = true), nrow)
+    @same combine(groupby(DataFrame(k = Union{Missing,Int}[missing, missing]), :k), nrow)
+    @same combine(groupby(DataFrame(k = [typemax(Int), typemin(Int), typemax(Int)]), :k), nrow)
+    @same combine(groupby(DataFrame(k = [typemax(Int), typemax(Int) - 1, typemax(Int)]), :k), nrow)
+    @same combine(groupby(DataFrame(k = [typemin(Int), typemin(Int) + 1, typemin(Int)]), :k), nrow)
+    @same combine(groupby(DataFrame(k = [true, false, true]), :k), nrow)
+    @same combine(groupby(DataFrame(a = [1, 2, 1, 2], b = [1, 1, 2, 2], c = [1, 1, 1, 2]), [:a, :b, :c]), nrow)
+    @same combine(groupby(DataFrame(a = [1, 1, 2], b = [20, 10, 20]), [:a, :b]; sort = false), nrow)
+    @same combine(groupby(DataFrame(s = ["x", "y", "x", "y"], k = [1, 1, 2, missing]), [:s, :k]), nrow)
+    @same combine(groupby(DataFrame(a = [1, missing, 1, 2], b = [missing, 1, missing, 2]), [:a, :b]; skipmissing = true), nrow)
+    @same combine(groupby(DataFrame(k = Int[]), :k), nrow)
+end

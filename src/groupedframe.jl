@@ -67,7 +67,7 @@ function group_of!(seen::Dict{K,Int}, key::K, ngroups::Int) where {K}
     return ngroups + 1, ngroups + 1
 end
 
-function refine_groups(ids::Vector{Int}, col::Vector{T}, skipmissing::Bool) where {T}
+function hash_refine(ids::Vector{Int}, col::Vector{T}, skipmissing::Bool) where {T}
     S = nonmissingtype(T)
     seen = Dict{Tuple{Int,S},Int}()
     seen_missing = Dict{Int,Int}()
@@ -88,8 +88,71 @@ function refine_groups(ids::Vector{Int}, col::Vector{T}, skipmissing::Bool) wher
     return refined, ngroups
 end
 
-refine_by(df::Frame{C}, ids::Vector{Int}, key::Symbol, skipmissing::Bool) where {C} =
-    splitcolumn(c -> refine_groups(ids, c, skipmissing), C, column(df, key))::Tuple{Vector{Int},Int}
+const SlotInteger = Union{Bool,Int8,Int16,Int32,Int64,UInt8,UInt16,UInt32,UInt64}
+
+function integer_bounds(col::Vector{T}) where {T}
+    S = nonmissingtype(T)
+    lo = typemax(S)
+    hi = typemin(S)
+    for x in col
+        x === missing && continue
+        value = x::S
+        value < lo && (lo = value)
+        value > hi && (hi = value)
+    end
+    return lo, hi
+end
+
+"""
+    slot_width(lo, hi, oldgroups, nrows)
+
+The number of table slots per existing group for integer keys in `lo:hi`, the last one
+being for `missing`, or 0 when the table would exceed two entries per row.
+"""
+function slot_width(lo, hi, oldgroups::Int, nrows::Int)
+    lo > hi && return 0
+    (Int128(lo) >= typemin(Int) && Int128(hi) <= typemax(Int)) || return 0
+
+    width = Int128(hi) - Int128(lo) + 2
+    return width * oldgroups <= 2 * Int128(nrows) ? Int(width) : 0
+end
+
+function slot_refine(ids::Vector{Int}, col::Vector{T}, lo::Int, width::Int, oldgroups::Int, skipmissing::Bool) where {T}
+    S = nonmissingtype(T)
+    table = zeros(Int, width * oldgroups)
+    refined = Vector{Int}(undef, length(col))
+    ngroups = 0
+
+    for i in eachindex(col, ids)
+        id = ids[i]
+        x = col[i]
+        if id == 0 || (skipmissing && x === missing)
+            refined[i] = 0
+        else
+            offset = x === missing ? width - 1 : Int(x::S) - lo
+            slot = (id - 1) * width + offset + 1
+            if table[slot] == 0
+                ngroups += 1
+                table[slot] = ngroups
+            end
+            refined[i] = table[slot]
+        end
+    end
+    return refined, ngroups
+end
+
+refine_groups(ids::Vector{Int}, ::Int, col::Vector, skipmissing::Bool) = hash_refine(ids, col, skipmissing)
+refine_groups(ids::Vector{Int}, ::Int, col::Vector{Missing}, skipmissing::Bool) = hash_refine(ids, col, skipmissing)
+
+function refine_groups(ids::Vector{Int}, oldgroups::Int, col::Vector{T}, skipmissing::Bool) where {T<:Union{SlotInteger,Missing}}
+    lo, hi = integer_bounds(col)
+    width = slot_width(lo, hi, oldgroups, length(col))
+    width == 0 && return hash_refine(ids, col, skipmissing)
+    return slot_refine(ids, col, Int(lo), width, oldgroups, skipmissing)
+end
+
+refine_by(df::Frame{C}, ids::Vector{Int}, oldgroups::Int, key::Symbol, skipmissing::Bool) where {C} =
+    splitcolumn(c -> refine_groups(ids, oldgroups, c, skipmissing), C, column(df, key))::Tuple{Vector{Int},Int}
 
 """
     integer_pool_size(col, skipmissing)
@@ -195,7 +258,7 @@ function groupby(df::Frame{C}, cols; sort::Union{Bool,Nothing} = nothing, skipmi
     ids = ones(Int, nrow(df))
     ngroups = nrow(df) == 0 ? 0 : 1
     for key in keys
-        ids, ngroups = refine_by(df, ids, key, skipmissing)
+        ids, ngroups = refine_by(df, ids, ngroups, key, skipmissing)
     end
 
     sorted = sort === true || (sort === nothing && uses_integer_order(df, keys, skipmissing))
