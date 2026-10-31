@@ -92,8 +92,8 @@ Each of these follows from what can be compiled without dynamic dispatch.
 
 The set of allowed types is closed, but `f` is compiled for each of them. So:
 
-- `f` must be trim-safe for every member of the column set it can reach, even if no such
-  column exists at run time. A method error is fine (`sum` of a `String` column compiles to a
+- `f` must be trim-safe for every member of the column set its signature accepts, even if no
+  such column exists at run time. A method error is fine (`sum` of a `String` column compiles to a
   throw), a dynamic call is not. For instance `sum(skipmissing(x))` is rejected by the juliac
   verifier for every `x::Vector{Union{Missing,T}}`, independently of this package: Base's
   `_mapreduce` for `skipmissing` has its `f::Function` widened and calls `mapreduce_empty`
@@ -112,17 +112,45 @@ The set of allowed types is closed, but `f` is compiled for each of them. So:
 
 ## Cost of multi-column sources
 
-With `n` allowed column types, a source of `k` columns compiles `f` for `n^k` combinations of
-types, since each column's type is a run-time value. That also holds for a tuple source.
-A vector source compiles each arity that `f` has, up to 3. Methods are looked up at compile
-time, so a 2-argument `f` costs `n^2`, while a vararg function like `+` costs `n + n^2 + n^3`.
-With 8 column types, `[:a, :b] => ByRow(+)` and a 3-column tuple source each compile in about 40 s
-with WasmCodegen, against 3 to 20 s for the other entries in `test/compile/Programs.jl`, and the
-tuple source gives the largest module (480 KB, against 120 to 380 KB for most others). To reduce
-this, allow fewer column types.
+With `n` allowed column types, a source of `k` columns has `n^k` combinations of types, since
+each column's type is a run-time value. That also holds for a tuple source. A vector source
+does this for each arity that `f` has, up to 3.
+
+A combination counts as a branch if `f` can run for it, which inference decides. A source may
+have at most 30 branches (`MAX_BRANCHES`), and more than that does not compile: the verifier
+reports an unresolved call from `too_many_branches`. Natively it still works, by dynamic
+dispatch on the combination that occurs.
+
+So annotate functions of several columns with the types you expect:
+
+```julia
+(:qty, :flag) => ByRow((a, b) -> 1)                                   # 64 branches, rejected
+(:qty, :flag) => ByRow((a::Int64, b::Bool) -> 1)                      # 4 branches
+(:qty, :flag) => ((a::AbstractVector{Int64}, b::AbstractVector{Bool}) -> 1)  # 1 branch
+```
+
+Annotate the element type of a `ByRow` function, or `AbstractVector` for a whole-column one:
+a group's column is a `SubArray`, not a `Vector`. An element annotation also matches the
+non-missing part of a `Union{Missing,T}` column, and a `Union{Missing,T}` annotation matches
+the missing part of every such column. A column that does not fit the annotation gives a
+`MethodError` at run time, which does not name the column.
+
+Combinations with no method do not call `f`, but the code around that call is still compiled.
+With 8 column types, a 3-column source compiled with WasmCodegen gives 267 KB with element
+annotations and 159 KB with whole-column ones (a plain one-column `select` is 120 KB). Without
+annotations it was 480 KB, in about 35 s, before this limit existed. `[:a, :b] => ByRow(+)` is
+now over the limit: use a function with annotated arguments.
 
 `vcat` has `n^2` type pairs, of which only pairs that promote to an allowed type compile to
 copies. The others throw the `ColumnTypeError`.
+
+## Known issues
+
+A trimmed executable can segfault at startup, in the dynamic call of `Base.Sys.__init__`,
+before any program code runs. The build succeeds and each executable behaves the same on every
+run, but small source changes turn the crash on or off: unrelated padding functions in `src/`
+did so for `p_vcat` compiled alone. The cause is not known. Eight plain Julia programs without
+this package did not crash. WasmCodegen output is not affected.
 
 ## Tests
 
