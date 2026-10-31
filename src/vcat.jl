@@ -107,6 +107,8 @@ function concat_into!(out::Vector, sources::ColumnSources{C}) where {C}
     return out
 end
 
+holds_missing_only(col::Vector{T}) where {T} = Missing <: T && !isempty(col) && all(ismissing, col)
+
 function concat_column(sources::ColumnSources{C}) where {C}
     target = NO_COLUMN
     for piece in sources.pieces
@@ -202,6 +204,26 @@ function check_source_name(names::Vector{Symbol}, name::Symbol)
     end
 end
 
+function column_sources(frames::Vector{Frame{C}}, name::Symbol, lengths::Vector{Int}) where {C}
+    pieces = C[]
+    present = fill(false, length(frames))
+    fallback = 0
+    for (i, df) in enumerate(frames)
+        hasproperty(df, name) || continue
+        fallback = fallback == 0 ? i : fallback
+        col = column(df, name)
+        if !(splitcolumn(holds_missing_only, C, col)::Bool)
+            push!(pieces, col)
+            present[i] = true
+        end
+    end
+    if isempty(pieces) && fallback != 0
+        push!(pieces, column(frames[fallback], name))
+        present[fallback] = true
+    end
+    return ColumnSources{C}(name, pieces, lengths, present)
+end
+
 function vcat_frames(frames::Vector{Frame{C}}, cols, source) where {C}
     kept = Frame{C}[df for df in frames if ncol(df) > 0]
     isempty(kept) && return Frame{C}()
@@ -210,9 +232,7 @@ function vcat_frames(frames::Vector{Frame{C}}, cols, source) where {C}
     outcols = C[]
     lengths = Int[nrow(df) for df in kept]
     for name in names
-        present = Bool[hasproperty(df, name) for df in kept]
-        pieces = C[column(df, name) for df in kept if hasproperty(df, name)]
-        push!(outcols, concat_column(ColumnSources{C}(name, pieces, lengths, present)))
+        push!(outcols, concat_column(column_sources(kept, name, lengths)))
     end
     add_source!(names, outcols, kept, source, C)
     return Frame{C}(names, outcols)

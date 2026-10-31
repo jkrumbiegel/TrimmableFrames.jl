@@ -209,11 +209,22 @@ end
 @generated is_table_row(::Type{Row}) where {Row} = row_field_names(Row) !== nothing && Row <: NamedTuple
 @generated is_row(::Type{Row}) where {Row} = row_field_names(Row) !== nothing
 
+function emit_uninferred_fields!(cx::Context, target, results)
+    labels = keys(first(results)::NamedTuple)
+    check_target_count(target, length(labels))
+    for j in eachindex(labels)
+        emit!(cx, target_name(target, labels, j), Any[r[j] for r in results], true)
+    end
+    return nothing
+end
+
 function emit!(cx::Context, target, results::Vector{R}, narrow::Bool) where {R}
     if is_table_row(R)
         return emit_fields!(cx, target, results, R, Val(false), narrow)
     elseif R <: AbstractVector && is_row(element_union(R))
         return emit_fields!(cx, target, results, element_union(R), Val(true), narrow)
+    elseif typeintersect(R, NamedTuple) !== Union{} && !isempty(results) && all(r -> r isa NamedTuple, results)
+        return emit_uninferred_fields!(cx, target, results)
     end
     return not_a_table(cx.out.verb)
 end
@@ -233,6 +244,8 @@ function emit_auto!(cx::Context, results::Vector{R}) where {R}
         return emit_frames!(cx, results)
     elseif is_table_row(R) || (R <: AbstractVector && is_table_row(element_union(R)))
         return emit!(cx, AsTable, results, false)
+    elseif typeintersect(R, NamedTuple) !== Union{} && !isempty(results) && all(r -> r isa NamedTuple, results)
+        return emit_uninferred_fields!(cx, AsTable, results)
     end
     return emit!(cx, :x1, results, false)
 end

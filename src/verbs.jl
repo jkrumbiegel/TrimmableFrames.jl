@@ -49,13 +49,17 @@ combine(f::Base.Callable, df::Union{Frame,GroupedFrame}; kwargs...) = combine(df
 select!(f::Base.Callable, df::Frame; kwargs...) = select!(df, f; kwargs...)
 transform!(f::Base.Callable, df::Frame; kwargs...) = transform!(df, f; kwargs...)
 
-function manipulate(verb::Symbol, gd::GroupedFrame{C}, args::Tuple, keeprows::Bool, renamecols::Bool, copycols::Bool) where {C}
-    if keeprows && length(rowgroups(gd).rows) != nrow(parent(gd))
+function reject_dropped_rows(verb::Symbol, gd::GroupedFrame)
+    if length(rowgroups(gd).rows) != nrow(parent(gd))
         throw(ArgumentError(string(
             verb, " does not support a GroupedFrame from which some rows were dropped, ",
             "as with groupby(df, cols; skipmissing=true)",
         )))
     end
+end
+
+function manipulate(verb::Symbol, gd::GroupedFrame{C}, args::Tuple, keeprows::Bool, renamecols::Bool, copycols::Bool) where {C}
+    keeprows && reject_dropped_rows(verb, gd)
     out = Output{C}(verb, keeprows)
     run_all!(Context(parent(gd), rowgroups(gd), out, renamecols, copycols), args)
     return out
@@ -270,10 +274,9 @@ end
 
 function subset(gd::GroupedFrame, args::Vararg{Any,N}; skipmissing::Bool = false, view::Bool = false, threads::Bool = true) where {N}
     reject_view(view)
+    reject_dropped_rows(:subset, gd)
     df = parent(gd)
-    mask = fill(false, nrow(df))
-    mask[rowgroups(gd).rows] .= true
-    run_conditions!(df, rowgroups(gd), mask, skipmissing, 1, args)
+    mask = run_conditions!(df, rowgroups(gd), fill(true, nrow(df)), skipmissing, 1, args)
     return take_frame(df, findall(mask))
 end
 
