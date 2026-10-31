@@ -1,0 +1,7 @@
+name = "TrimmableFrames"
+uuid = "928ec15d-74b1-4d86-a99d-73c5a13020bf"
+version = "0.1.0"
+authors = ["Julius Krumbiegel <julius.krumbiegel@gmail.com>"]
+
+[compat]
+julia = "1.13"
