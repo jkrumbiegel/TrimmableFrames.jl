@@ -48,6 +48,10 @@ allowed column types (Bool, Float64, Int64, String, ...)
 - `groupby(df, cols; sort, skipmissing)` with the group order of DataFrames, also for
   `sort=nothing`. `GroupedFrame` has `length`, indexing, iteration, `parent`, `groupcols`,
   `groupindices`.
+- Joins: `innerjoin`, `leftjoin`, `rightjoin`, `outerjoin`, `semijoin`, `antijoin`, `crossjoin`
+  with `on` (names, `left => right` pairs and vectors of both), `makeunique`, `validate`,
+  `renamecols`, `matchmissing`, `order`, `source`, and more than two frames for `innerjoin`,
+  `outerjoin` and `crossjoin`.
 - Mini-language: `:a`, `:a => :b`, `:a => f`, `:a => f => :b`, `[:a, :b] => f => :c`,
   `:a => ByRow(f)`, `f => AsTable`, `f => [:x, :y]`, `nrow`, `nrow => :n`, `proprow`,
   `[:a, :b] .=> sum .=> [:x, :y]`, a function of the group (`combine(sdf -> ..., gd)`, also as
@@ -83,13 +87,19 @@ Each of these follows from what can be compiled without dynamic dispatch.
 - `df.x` has the type of the whole column union, so with more than a few allowed types a
   call like `sum(df.x)` does not compile. Narrow it first, with `df.x::Vector{Float64}` or
   `isa`, or use `combine(df, :x => sum)`, which narrows by itself.
+- Joins need the same allowed column types in all frames, and each pair of key columns needs
+  the same element type apart from `Missing`. Joining `Int64` to `Int64?` works, joining
+  `Int64` to `Float64` throws an `ArgumentError`, which DataFrames matches by value. A join
+  that needs `missing` in a column without an allowed `?` type throws a `ColumnTypeError`.
+- `validate` errors do not list the duplicate keys, and the deprecated `indicator` keyword is
+  not supported: use `source`.
 - `threads` is accepted and ignored: everything runs on one task. `ungroup` is not
   implemented, because it would make the return type depend on a run-time value.
 - Regular expressions are not selectors: PCRE is a C library, unavailable under WasmCodegen.
 - A list of different functions, `[:a => sum, :b => maximum]`, has a non-concrete element
   type, as `Pair{Symbol,Function}`. It works natively, but the verifier rejects it. Pass the
   pairs as separate arguments, or pick from a tuple of functions at run time.
-- Not implemented yet: joins, `sort`, `unique`, `stack`, `dropmissing`, `eachrow`, `Tables.jl`.
+- Not implemented yet: `leftjoin!`, `sort`, `unique`, `stack`, `dropmissing`, `eachrow`, `Tables.jl`.
 
 ## Writing compilable code
 
@@ -164,13 +174,15 @@ copies. The others throw the `ColumnTypeError`.
 
 ## Known issues
 
-A trimmed executable can segfault at startup, in the dynamic call of `Base.Sys.__init__`,
-before any program code runs. The build succeeds and each executable behaves the same on every
-run, but small source changes turn the crash on or off. Unrelated padding functions in `src/`
-did so for `p_vcat` compiled alone, and adding the integer path of `groupby` turned it off for
-the full test program, which had crashed in every build before. A passing build therefore says
-nothing about the next change. The cause is not known. Eight plain Julia programs without this
-package did not crash. WasmCodegen output is not affected.
+A trimmed executable can segfault at startup, before any program code runs, in the method
+cache lookup of `ijl_apply_generic`: from the dynamic call of `Base.Sys.__init__`, or from
+`jl_finish_task` on another thread. The build succeeds and each executable behaves the same on
+every run, but small source changes turn the crash on or off. Unrelated padding functions in
+`src/` did so for `p_vcat` compiled alone, the integer path of `groupby` turned it off for the
+full test program, and joins turned it on again. A passing build therefore says nothing about
+the next change. `JULIA_NUM_THREADS=1` does not help. The cause is not known. Eight plain Julia
+programs without this package did not crash. WasmCodegen output is not affected. Joins pass the
+`juliac` verifier, but their output has not been checked in a trimmed executable.
 
 ## Tests
 

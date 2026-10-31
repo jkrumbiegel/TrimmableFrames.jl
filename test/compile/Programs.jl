@@ -148,6 +148,37 @@ p_error_subset() = catching(() -> render(subset(source_frame(), :price => ByRow(
 p_error_expected() = catching(() -> render(select(number_frame(), [:x, :n] => ByRow(+) => :z)))
 p_error_vector_source() = catching(() -> render(select(source_frame(), [:qty, :price, :flag, :city] => ((a, b, c, d) -> a) => :q)))
 
+join_people() = DF(
+    id = [1, 2, 2, 4],
+    name = ["a", "b", "c", "d"],
+    score = Union{Missing,Float64}[1.5, missing, 2.5, 3.5],
+)
+join_jobs() = DF(id = [2, 2, 3, 1], job = ["x", "y", "z", "w"])
+join_missing_keys() = DF(id = Union{Missing,Int64}[1, missing, 2], name = ["p", "q", "r"])
+
+p_innerjoin() = render(innerjoin(join_people(), join_jobs(); on = :id))
+p_leftjoin() = render(leftjoin(join_people(), join_jobs(); on = :id, order = :left))
+p_rightjoin() = render(rightjoin(join_people(), join_jobs(); on = :id, order = :right))
+p_outerjoin() = render(outerjoin(join_people(), join_jobs(); on = :id, source = :from))
+p_semijoin() = render(semijoin(join_people(), join_jobs(); on = :id))
+p_antijoin() = render(antijoin(join_people(), join_jobs(); on = :id))
+p_crossjoin() = render(crossjoin(join_people(), join_jobs(); makeunique = true))
+p_join_keys() = render(innerjoin(join_people(), join_jobs(); on = [:id, :name => :job], validate = (true, true)))
+p_join_vector_key() = render(innerjoin(join_people(), join_jobs(); on = [:id]))
+p_join_renamed() = render(leftjoin(join_people(), join_jobs(); on = :id => :id, renamecols = "_l" => uppercase))
+p_join_several() = render(outerjoin(join_people(), join_jobs(), DF(id = [4], extra = [true]); on = :id))
+p_join_missing() = render(outerjoin(join_missing_keys(), join_people(); on = :id, matchmissing = :equal, makeunique = true))
+p_join_notequal() = render(innerjoin(join_missing_keys(), join_people(); on = :id, matchmissing = :notequal, makeunique = true))
+function p_join_runtime_key(i)
+    key = i == 0 ? :id : :name
+    return render(innerjoin(join_people(), join_missing_keys(); on = key, matchmissing = :equal, makeunique = true))
+end
+
+p_error_join_key() = catching(() -> render(innerjoin(join_people(), join_jobs(); on = :id => :job)))
+p_error_join_missing() = catching(() -> render(innerjoin(join_missing_keys(), join_people(); on = :id)))
+p_error_join_validate() = catching(() -> render(innerjoin(join_people(), join_jobs(); on = :id, validate = (true, false))))
+p_error_join_allowed() = catching(() -> render(leftjoin(narrow_frame(), frametype(Int64, String)(a = [2], t = ["z"]); on = :a)))
+
 const ENTRY_POINTS = (
     (p_construct, ()), (p_construct_kw, ()), (p_construct_runtime, ()), (p_construct_error, ()),
     (p_columns, ()),
@@ -161,12 +192,16 @@ const ENTRY_POINTS = (
     (p_group_transform, ()), (p_group_select, ()),
     (p_subset, ()), (p_subset_missing, ()), (p_subset_group, ()),
     (p_vcat, ()), (p_vcat_union, ()), (p_vcat_source, ()),
+    (p_innerjoin, ()), (p_leftjoin, ()), (p_rightjoin, ()), (p_outerjoin, ()), (p_semijoin, ()), (p_antijoin, ()),
+    (p_crossjoin, ()), (p_join_keys, ()), (p_join_vector_key, ()), (p_join_renamed, ()), (p_join_several, ()),
+    (p_join_missing, ()), (p_join_notequal, ()), (p_join_runtime_key, (0, 1)),
     (p_expected, ()), (p_expected_second, ()), (p_expected_missing, ()), (p_expected_column, ()), (p_expected_subset, ()),
     (p_vector_source_vararg, ()), (p_tuple_source, ()), (p_small_set, ()), (p_small_set_vcat, ()),
     (p_runtime_function, (0, 1, 2)),
     (p_error_vcat, ()), (p_error_vcat_missing, ()), (p_error_transform, ()), (p_error_combine, ()),
     (p_error_outside_all, ()), (p_error_missing_column, ()), (p_error_duplicate, ()),
     (p_error_length, ()), (p_error_subset, ()), (p_error_vector_source, ()), (p_error_expected, ()),
+    (p_error_join_key, ()), (p_error_join_missing, ()), (p_error_join_validate, ()), (p_error_join_allowed, ()),
 )
 
 end

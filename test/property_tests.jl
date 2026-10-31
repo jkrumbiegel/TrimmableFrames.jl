@@ -124,6 +124,18 @@ catch e
     (:error, typeof(e))
 end
 
+const JOIN_KINDS = (:innerjoin, :leftjoin, :rightjoin, :outerjoin, :semijoin, :antijoin)
+const JOIN_KEYS = (:k, :w, :s, :b, :y, [:k, :s], [:w, :b], [:s, :k, :b], :k => :w, [:w => :k, :s])
+const JOIN_MODES = (:error, :equal, :notequal)
+const JOIN_CALLS = [:($kind(left, right; on = $(QuoteNode(on)), makeunique = true, matchmissing = $(QuoteNode(mode))))
+                    for kind in JOIN_KINDS, on in JOIN_KEYS, mode in JOIN_MODES]
+const JOIN_FUNCTIONS = [(Core.eval(DFSide, :((left, right) -> $call)), Core.eval(TFSide, :((left, right) -> $call))) for call in JOIN_CALLS]
+
+function sorted_outcome(result)
+    first(result) === :frame || return result
+    return sorted_rows(result)
+end
+
 @testset "agreement with DataFrames on generated frames" begin
     @check max_examples = 1200 function grouped_operations(
         rows = ROWS,
@@ -137,6 +149,20 @@ end
         candidate = attempt(df -> op_tf(df, Base.invokelatest(group_tf, df)), tfs)
         event!("grouping", GROUP_SETTINGS[grouping])
         event!("operation", GROUP_OPERATIONS[operation])
+        event!("DataFrames", reference)
+        event!("TrimmableFrames", candidate)
+        agree(reference, candidate)
+    end
+
+    @check db = false max_examples = 1200 function joins(
+        left = ROWS,
+        right = ROWS,
+        call = Data.SampledFrom(eachindex(JOIN_CALLS)),
+    )
+        op_df, op_tf = JOIN_FUNCTIONS[call]
+        reference = sorted_outcome(attempt(op_df, frame_of(DFSide, left), frame_of(DFSide, right)))
+        candidate = sorted_outcome(attempt(op_tf, frame_of(TFSide, left), frame_of(TFSide, right)))
+        event!("call", JOIN_CALLS[call])
         event!("DataFrames", reference)
         event!("TrimmableFrames", candidate)
         agree(reference, candidate)
