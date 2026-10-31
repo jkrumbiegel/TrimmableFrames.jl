@@ -50,7 +50,7 @@ end
 p_select() = render(select(source_frame(), :qty, :city => :town, Not(:city, :qty, :kind)))
 p_select_function() = render(select(source_frame(), :qty => (x -> x .+ 1) => :next, :price => ByRow(x -> x * 2.0), :city => ByRow(uppercase) => :u))
 p_select_scalar() = render(select(source_frame(), :qty => sum, :city))
-p_select_multi() = render(select(source_frame(), [:qty, :price] => ByRow((a, b) -> a * b) => :value, (:qty, :flag) => ((a, b) -> a .+ b) => :sum))
+p_select_multi() = render(select(source_frame(), [:qty, :price] => ByRow((a::Int64, b::Union{Missing,Float64}) -> a * b) => :value, (:qty, :flag) => ((a::Vector{Int64}, b::Vector{Bool}) -> a .+ b) => :sum))
 p_select_table() = render(select(source_frame(), :qty => ByRow(x -> (double = x * 2, half = x / 2)) => AsTable))
 p_select_astable() = render(select(source_frame(), AsTable(Val((:qty, :flag))) => ByRow(t -> t.flag ? t.qty : 0) => :picked))
 p_transform() = render(transform(source_frame(), :qty => (x -> x .* 2) => :qty, :price => ByRow(x -> x === missing ? 0.0 : x) => :clean))
@@ -80,8 +80,12 @@ p_vcat() = render(vcat(DF(a = [1], b = ["x"]), DF(a = [2.5], b = ["y"])))
 p_vcat_union() = render(vcat(DF(a = [1], b = ["x"]), DF(a = Union{Missing,Int64}[2], c = [true]); cols = :union))
 p_vcat_source() = render(vcat(DF(a = [1]), DF(a = [2]); source = :from => ["l", "r"]))
 
-p_vector_source_vararg() = render(select(source_frame(), [:qty, :flag] => ByRow(+) => :z))
-p_tuple_source() = render(select(source_frame(), (:qty, :flag, :price) => ByRow((a, b, c) -> b ? Float64(a) : c) => :z))
+add_flags(a::Int64, flags::Bool...) = a + count(flags)
+
+p_vector_source_vararg() = render(select(source_frame(), [:qty, :flag] => ByRow(add_flags) => :z))
+p_tuple_source() = render(select(source_frame(), (:qty, :flag, :price) => ByRow((a::Int64, b::Bool, c::Union{Missing,Float64}) -> b ? Float64(a) : c) => :z))
+
+p_too_many_branches() = render(select(source_frame(), (:qty, :flag) => ByRow((a, b) -> 1) => :z))
 
 const SmallFrame = frametype(Int64, Float64, String, Union{Missing,Float64})
 

@@ -8,4 +8,5 @@ include("differential.jl")
     include("select_tests.jl")
     include("group_tests.jl")
     include("property_tests.jl")
+    include("branch_tests.jl")
 end

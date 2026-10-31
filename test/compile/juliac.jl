@@ -15,4 +15,13 @@ const JULIA = Base.julia_cmd()
 
     native = read(`$JULIA --project=$(@__DIR__) $PROGRAM`, String)
     @test read(`$executable`, String) == native
+
+    too_many = joinpath(@__DIR__, "juliac_too_many_branches.jl")
+    log = tempname()
+    rejected = run(pipeline(
+        ignorestatus(`$JULIA --project=$(@__DIR__) -m JuliaC --output-exe rejected --bundle $(mktempdir()) --trim=safe --project=$(@__DIR__) $too_many`);
+        stdout = log, stderr = log,
+    ))
+    @test !success(rejected)
+    @test occursin("too_many_branches", read(log, String))
 end

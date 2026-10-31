@@ -294,10 +294,52 @@ function (a::ApplyFunction)(cols::Tuple)
     return nothing
 end
 
+segments_type(a::ApplyFunction) = typeof(a.cx.segments)
+
+"""
+Most type combinations `f` may run for in one source. Each one is compiled, and each takes
+compile time and code size out of proportion to what a program can use.
+"""
+const MAX_BRANCHES = 30
+
+"""
+    branch_count(f, S, C, Val(N))
+
+How many combinations of `N` members of the column union `C` `f` can run for, given the
+segment type `S`. Folded by inference. A generator could not do this: it does not see
+methods defined after it.
+"""
+@generated function branch_count(f::F, ::Type{S}, ::Type{C}, ::Val{N}) where {F,S,C,N}
+    callee = F <: ByRow ? :(f.f) : :f
+    argument(V) = F <: ByRow ? eltype(V) : segmenttype(S, V)
+    combinations = Iterators.product(ntuple(_ -> columnmembers(C), N)...)
+    counts = map(combinations) do combination
+        arguments = Tuple{map(argument, combination)...}
+        :(count = Core.Compiler.return_type($callee, $arguments) === Union{} ? count : count + 1)
+    end
+    return Expr(:block, :(count = 0), counts..., :(return count))
+end
+
+"""
+    too_many_branches(a, cols)
+
+Calls `a` by dynamic dispatch, for a function with more than [`MAX_BRANCHES`](@ref)
+branches. Natively that compiles the one combination that occurs. The trim verifier rejects
+the call, which is the point: annotate the function's arguments with the expected types.
+"""
+too_many_branches(@nospecialize(a), cols::Tuple) = a(cols)
+
+function splitsource(a::A, cols::Vector{C}, indices::NTuple{N,Int}) where {A,C,N}
+    if branch_count(a.f, segments_type(a), C, Val(N)) <= MAX_BRANCHES
+        return splitcolumns(a, cols, indices)
+    end
+    return too_many_branches(a, map(i -> cols[i], indices))
+end
+
 function apply_columns!(cx::Context, names::NTuple{N,Symbol}, f::F, target::T) where {N,F,T}
     resolved = resolve_target(cx, names, f, target)
     indices = map(n -> columnindex(cx.df, n), names)
-    splitcolumns(ApplyFunction(trim_safe_function(f), cx, resolved), columns(cx.df), indices)
+    splitsource(ApplyFunction(trim_safe_function(f), cx, resolved), columns(cx.df), indices)
     return nothing
 end
 

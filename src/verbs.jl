@@ -210,9 +210,11 @@ function (a::ApplyCondition)(cols::Tuple)
     return nothing
 end
 
+segments_type(a::ApplyCondition) = typeof(a.sink.segments)
+
 function condition_columns!(df::Frame, sink, names::NTuple{N,Symbol}, f::F) where {N,F}
     indices = map(n -> columnindex(df, n), names)
-    splitcolumns(ApplyCondition(f, sink), columns(df), indices)
+    splitsource(ApplyCondition(f, sink), columns(df), indices)
     return nothing
 end
 
