@@ -14,3 +14,14 @@ Install a package from its subdirectory:
 import Pkg
 Pkg.add(url = "https://github.com/jkrumbiegel/TrimmableFrames.jl", subdir = "TrimmableFrames")
 ```
+
+The packages are not registered, so `TrimmableFramesCSV` has to be added together with
+`TrimmableFrames`:
+
+```julia
+url = "https://github.com/jkrumbiegel/TrimmableFrames.jl"
+Pkg.add([
+    Pkg.PackageSpec(; url, subdir = "TrimmableFrames"),
+    Pkg.PackageSpec(; url, subdir = "TrimmableFramesCSV"),
+])
+```
