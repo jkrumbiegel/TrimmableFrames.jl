@@ -7,6 +7,8 @@ export antijoin, crossjoin, innerjoin, leftjoin, outerjoin, rightjoin, semijoin
 export combine, groupby, groupcols, groupindices, insertcols, insertcols!, rename, rename!
 export select, select!, subset, subset!, transform, transform!
 
+public fitcolumn
+
 include("columns.jl")
 include("frame.jl")
 include("selectors.jl")
