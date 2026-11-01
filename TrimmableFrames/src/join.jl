@@ -91,7 +91,7 @@ function check_key_values(col::Vector{T}, name::Symbol, side::String, matchmissi
     return nothing
 end
 
-function check_key_columns(df::Frame{C}, names::Vector{Symbol}, side::String, matchmissing::Symbol) where {C}
+function check_key_columns(df::Frame{C,M}, names::Vector{Symbol}, side::String, matchmissing::Symbol) where {C,M}
     for name in names
         splitcolumn(c -> check_key_values(c, name, side, matchmissing), C, column(df, name))
     end
@@ -125,7 +125,7 @@ function pair_with_right(f::F, verb::Symbol, l::Vector{T}, pair::Vector{C}, lnam
 end
 
 # The two columns travel in a vector: a call with two arguments of a large union is not resolved.
-function with_key_pair(f::F, verb::Symbol, df1::Frame{C}, df2::Frame{C}, lname::Symbol, rname::Symbol) where {F,C}
+function with_key_pair(f::F, verb::Symbol, df1::Frame{C,M}, df2::Frame{C,M}, lname::Symbol, rname::Symbol) where {F,C,M}
     pair = C[column(df1, lname)]
     push!(pair, column(df2, rname))
     return splitcolumn(l -> pair_with_right(f, verb, l, pair, lname, rname), C, pair[1])
@@ -138,7 +138,7 @@ function concatenated(l::Vector{A}, r::Vector{B}) where {A,B}
     return out
 end
 
-function refine_key(verb::Symbol, ids::Vector{Int}, ngroups::Int, df1::Frame{C}, df2::Frame{C}, lname::Symbol, rname::Symbol, skipmissing::Bool) where {C}
+function refine_key(verb::Symbol, ids::Vector{Int}, ngroups::Int, df1::Frame{C,M}, df2::Frame{C,M}, lname::Symbol, rname::Symbol, skipmissing::Bool) where {C,M}
     refine = (l, r) -> refine_groups(ids, ngroups, concatenated(l, r), skipmissing)
     return with_key_pair(refine, verb, df1, df2, lname, rname)::Tuple{Vector{Int},Int}
 end
@@ -295,7 +295,7 @@ gathered_column(::Type{C}, verb::Symbol, name::Symbol, col, rows::Vector{Int}) w
 side_column(::Type{C}, verb::Symbol, name::Symbol, col, rows::Vector{Int}, nullable::Bool) where {C} =
     (nullable ? gathered_column(C, verb, name, col, rows) : takerows(C, col, rows))::C
 
-function key_column(verb::Symbol, kind::Symbol, df1::Frame{C}, df2::Frame{C}, name::Symbol, lname::Symbol, rname::Symbol, left::Vector{Int}, right::Vector{Int}) where {C}
+function key_column(verb::Symbol, kind::Symbol, df1::Frame{C,M}, df2::Frame{C,M}, name::Symbol, lname::Symbol, rname::Symbol, left::Vector{Int}, right::Vector{Int}) where {C,M}
     kind === :right && return takerows(C, column(df2, rname), right)::C
     kind === :outer || return takerows(C, column(df1, lname), left)::C
 
@@ -322,7 +322,7 @@ function source_name(label::Symbol, names::Vector{Symbol}, makeunique::Bool)
     return suffixed(label, names)
 end
 
-function compose_join(verb::Symbol, kind::Symbol, df1::Frame{C}, df2::Frame{C}, keys::JoinKeys, left::Vector{Int}, right::Vector{Int}, options::JoinOptions) where {C}
+function compose_join(verb::Symbol, kind::Symbol, df1::Frame{C,M}, df2::Frame{C,M}, keys::JoinKeys, left::Vector{Int}, right::Vector{Int}, options::JoinOptions) where {C,M}
     names = joined_names(df1, df2, keys, options)
     cols = C[]
     for (i, name) in enumerate(columnnames(df1))
@@ -346,7 +346,7 @@ function compose_join(verb::Symbol, kind::Symbol, df1::Frame{C}, df2::Frame{C}, 
         push!(names, name)
         push!(cols, fitcolumn(C, verb, name, source_labels(left, right), false)::C)
     end
-    return Frame{C}(names, cols)
+    return Frame{C,M}(names, cols, joined_metadata(kind, df1, df2, keys, names))
 end
 
 function run_join(verb::Symbol, kind::Symbol, df1::Frame, df2::Frame, on, options::JoinOptions)
@@ -362,13 +362,13 @@ end
 Rows whose keys match in all frames, as in DataFrames. All frames have the same allowed
 column types, and a key column pair must have the same element type apart from `Missing`.
 """
-function innerjoin(df1::Frame{C}, df2::Frame{C}; on = Symbol[], makeunique::Bool = false, validate = (false, false),
-                   renamecols::Pair = identity => identity, matchmissing::Symbol = :error, order::Symbol = :undefined) where {C}
+function innerjoin(df1::Frame{C,M}, df2::Frame{C,M}; on = Symbol[], makeunique::Bool = false, validate = (false, false),
+                   renamecols::Pair = identity => identity, matchmissing::Symbol = :error, order::Symbol = :undefined) where {C,M}
     return run_join(:innerjoin, :inner, df1, df2, on, JoinOptions(makeunique, validate, renamecols, matchmissing, order, nothing))
 end
 
-function innerjoin(df1::Frame{C}, df2::Frame{C}, df3::Frame{C}, dfs::Vararg{Frame{C},N}; on = Symbol[], makeunique::Bool = false,
-                   validate = (false, false), matchmissing::Symbol = :error, order::Symbol = :undefined) where {C,N}
+function innerjoin(df1::Frame{C,M}, df2::Frame{C,M}, df3::Frame{C,M}, dfs::Vararg{Frame{C,M},N}; on = Symbol[], makeunique::Bool = false,
+                   validate = (false, false), matchmissing::Symbol = :error, order::Symbol = :undefined) where {C,M,N}
     rest = (df3, dfs...)
     intermediate = order === :right ? :undefined : order
     result = innerjoin(df1, df2; on, makeunique, validate, matchmissing, order = intermediate)
@@ -386,8 +386,8 @@ end
 All rows of `df1` with their matches in `df2`. The columns of `df2` need a `Missing` member
 in the allowed types, unless every row of `df1` has a match.
 """
-function leftjoin(df1::Frame{C}, df2::Frame{C}; on = Symbol[], makeunique::Bool = false, source = nothing, validate = (false, false),
-                  renamecols::Pair = identity => identity, matchmissing::Symbol = :error, order::Symbol = :undefined) where {C}
+function leftjoin(df1::Frame{C,M}, df2::Frame{C,M}; on = Symbol[], makeunique::Bool = false, source = nothing, validate = (false, false),
+                  renamecols::Pair = identity => identity, matchmissing::Symbol = :error, order::Symbol = :undefined) where {C,M}
     return run_join(:leftjoin, :left, df1, df2, on, JoinOptions(makeunique, validate, renamecols, matchmissing, order, source))
 end
 
@@ -398,8 +398,8 @@ end
 All rows of `df2` with their matches in `df1`. The columns of `df1` need a `Missing` member
 in the allowed types, unless every row of `df2` has a match.
 """
-function rightjoin(df1::Frame{C}, df2::Frame{C}; on = Symbol[], makeunique::Bool = false, source = nothing, validate = (false, false),
-                   renamecols::Pair = identity => identity, matchmissing::Symbol = :error, order::Symbol = :undefined) where {C}
+function rightjoin(df1::Frame{C,M}, df2::Frame{C,M}; on = Symbol[], makeunique::Bool = false, source = nothing, validate = (false, false),
+                   renamecols::Pair = identity => identity, matchmissing::Symbol = :error, order::Symbol = :undefined) where {C,M}
     return run_join(:rightjoin, :right, df1, df2, on, JoinOptions(makeunique, validate, renamecols, matchmissing, order, source))
 end
 
@@ -410,13 +410,13 @@ end
 All rows of all frames, matched where their keys agree. `source` and `renamecols` apply to
 two frames only.
 """
-function outerjoin(df1::Frame{C}, df2::Frame{C}; on = Symbol[], makeunique::Bool = false, source = nothing, validate = (false, false),
-                   renamecols::Pair = identity => identity, matchmissing::Symbol = :error, order::Symbol = :undefined) where {C}
+function outerjoin(df1::Frame{C,M}, df2::Frame{C,M}; on = Symbol[], makeunique::Bool = false, source = nothing, validate = (false, false),
+                   renamecols::Pair = identity => identity, matchmissing::Symbol = :error, order::Symbol = :undefined) where {C,M}
     return run_join(:outerjoin, :outer, df1, df2, on, JoinOptions(makeunique, validate, renamecols, matchmissing, order, source))
 end
 
-function outerjoin(df1::Frame{C}, df2::Frame{C}, df3::Frame{C}, dfs::Vararg{Frame{C},N}; on = Symbol[], makeunique::Bool = false,
-                   validate = (false, false), matchmissing::Symbol = :error, order::Symbol = :undefined) where {C,N}
+function outerjoin(df1::Frame{C,M}, df2::Frame{C,M}, df3::Frame{C,M}, dfs::Vararg{Frame{C,M},N}; on = Symbol[], makeunique::Bool = false,
+                   validate = (false, false), matchmissing::Symbol = :error, order::Symbol = :undefined) where {C,M,N}
     result = outerjoin(df1, df2; on, makeunique, validate, matchmissing, order)
     for df in (df3, dfs...)
         result = outerjoin(result, df; on, makeunique, validate, matchmissing, order)
@@ -443,7 +443,7 @@ end
 
 The rows of `df1` with a match in `df2`.
 """
-function semijoin(df1::Frame{C}, df2::Frame{C}; on = Symbol[], makeunique::Bool = false, validate = (false, false), matchmissing::Symbol = :error) where {C}
+function semijoin(df1::Frame{C,M}, df2::Frame{C,M}; on = Symbol[], makeunique::Bool = false, validate = (false, false), matchmissing::Symbol = :error) where {C,M}
     return filter_by_match(:semijoin, :semi, df1, df2, on, JoinOptions(makeunique, validate, identity => identity, matchmissing, :left, nothing), true)
 end
 
@@ -452,7 +452,7 @@ end
 
 The rows of `df1` without a match in `df2`.
 """
-function antijoin(df1::Frame{C}, df2::Frame{C}; on = Symbol[], makeunique::Bool = false, validate = (false, false), matchmissing::Symbol = :error) where {C}
+function antijoin(df1::Frame{C,M}, df2::Frame{C,M}; on = Symbol[], makeunique::Bool = false, validate = (false, false), matchmissing::Symbol = :error) where {C,M}
     return filter_by_match(:antijoin, :anti, df1, df2, on, JoinOptions(makeunique, validate, identity => identity, matchmissing, :left, nothing), false)
 end
 
@@ -473,13 +473,13 @@ end
 
 Every combination of rows. `renamecols` applies to two frames only.
 """
-function crossjoin(df1::Frame{C}, df2::Frame{C}; makeunique::Bool = false, renamecols::Pair = identity => identity) where {C}
+function crossjoin(df1::Frame{C,M}, df2::Frame{C,M}; makeunique::Bool = false, renamecols::Pair = identity => identity) where {C,M}
     left, right = cross_rows(nrow(df1), nrow(df2))
     options = JoinOptions(makeunique, (false, false), renamecols, :error, :undefined, nothing)
     return compose_join(:crossjoin, :inner, df1, df2, JoinKeys(Symbol[], Symbol[]), left, right, options)
 end
 
-function crossjoin(df1::Frame{C}, df2::Frame{C}, df3::Frame{C}, dfs::Vararg{Frame{C},N}; makeunique::Bool = false) where {C,N}
+function crossjoin(df1::Frame{C,M}, df2::Frame{C,M}, df3::Frame{C,M}, dfs::Vararg{Frame{C,M},N}; makeunique::Bool = false) where {C,M,N}
     result = crossjoin(df1, df2; makeunique)
     for df in (df3, dfs...)
         result = crossjoin(result, df; makeunique)

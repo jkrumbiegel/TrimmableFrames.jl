@@ -20,7 +20,8 @@ subset(df, :qty => ByRow(>(1)))
 vcat(df, select(df, :city); cols = :union)
 ```
 
-`frametype` returns a `Frame{C}`, where `C` is the union of the allowed `Vector` types. Each
+`frametype` returns a `Frame{C,M}`, where `C` is the union of the allowed `Vector` types and `M`
+the union of allowed metadata types. Each
 column operation is an explicit chain of `isa` tests over the members of `C`, generated for
 any `C`, with your function called in each branch. Your function therefore gets compiled once
 per allowed column type, and no dynamic dispatch remains.
@@ -52,6 +53,9 @@ allowed column types (Bool, Float64, Int64, String, ...)
   with `on` (names, `left => right` pairs and vectors of both), `makeunique`, `validate`,
   `renamecols`, `matchmissing`, `order`, `source`, and more than two frames for `innerjoin`,
   `outerjoin` and `crossjoin`.
+- Metadata: `metadata`, `metadata!`, `metadatakeys`, `deletemetadata!`, `emptymetadata!` and
+  `colmetadata`, `colmetadata!`, `colmetadatakeys`, `deletecolmetadata!`, `emptycolmetadata!`,
+  following the `:note` propagation rules of DataFrames through verbs, `vcat` and joins.
 - Mini-language: `:a`, `:a => :b`, `:a => f`, `:a => f => :b`, `[:a, :b] => f => :c`,
   `:a => ByRow(f)`, `f => AsTable`, `f => [:x, :y]`, `nrow`, `nrow => :n`, `proprow`,
   `[:a, :b] .=> sum .=> [:x, :y]`, a function of the group (`combine(sdf -> ..., gd)`, also as
@@ -95,10 +99,17 @@ Each of these follows from what can be compiled without dynamic dispatch.
   not supported: use `source`.
 - `threads` is accepted and ignored: everything runs on one task. `ungroup` is not
   implemented, because it would make the return type depend on a run-time value.
+- `frametype` returns `Frame{C,M}`. Methods that take a frame type name both parameters.
 - Regular expressions are not selectors: PCRE is a C library, unavailable under WasmCodegen.
 - A list of different functions, `[:a => sum, :b => maximum]`, has a non-concrete element
   type, as `Pair{Symbol,Function}`. It works natively, but the verifier rejects it. Pass the
   pairs as separate arguments, or pick from a tuple of functions at run time.
+- Metadata values have the types you allow with `frametype(...; metadata = (String, Int64))`,
+  `String` by default. Others throw a `ColumnTypeError`. Reading gives the union of those types,
+  so with more than one, narrow it with `::T` or `isa`.
+- Only `:note`-style metadata exists, and it is the default style, unlike in DataFrames. Other
+  styles throw an `ArgumentError`, and `style=true` is not accepted when reading.
+- `metadatakeys` and `colmetadatakeys` return sorted vectors, not key sets.
 - Not implemented yet: `leftjoin!`, `sort`, `unique`, `stack`, `dropmissing`, `eachrow`, `Tables.jl`.
 
 ## Writing compilable code
@@ -179,10 +190,10 @@ cache lookup of `ijl_apply_generic`: from the dynamic call of `Base.Sys.__init__
 `jl_finish_task` on another thread. The build succeeds and each executable behaves the same on
 every run, but small source changes turn the crash on or off. Unrelated padding functions in
 `src/` did so for `p_vcat` compiled alone, the integer path of `groupby` turned it off for the
-full test program, and joins turned it on again. A passing build therefore says nothing about
-the next change. `JULIA_NUM_THREADS=1` does not help. The cause is not known. Eight plain Julia
-programs without this package did not crash. WasmCodegen output is not affected. Joins pass the
-`juliac` verifier, but their output has not been checked in a trimmed executable.
+full test program, joins turned it on again, and metadata off. In the current state the full
+test program of this package and of TrimmableFramesXPT run, and the one of TrimmableFramesCSV
+crashes this way. A passing build therefore says nothing about the next change. `JULIA_NUM_THREADS=1` does not help. The cause is not known. Eight plain Julia
+programs without this package did not crash. WasmCodegen output is not affected.
 
 ## Tests
 

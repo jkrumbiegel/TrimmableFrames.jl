@@ -179,7 +179,50 @@ p_error_join_missing() = catching(() -> render(innerjoin(join_missing_keys(), jo
 p_error_join_validate() = catching(() -> render(innerjoin(join_people(), join_jobs(); on = :id, validate = (true, false))))
 p_error_join_allowed() = catching(() -> render(leftjoin(narrow_frame(), frametype(Int64, String)(a = [2], t = ["z"]); on = :a)))
 
+const Annotated = frametype(String, Int64, Float64, Bool; allowmissing = true, metadata = (String, Int64, Float64))
+
+function annotated()
+    df = Annotated(id = [1, 2, 2], k = ["a", "a", "b"], x = [1.0, 2.0, 3.0])
+    metadata!(df, "study", "s1")
+    metadata!(df, "version", 2)
+    colmetadata!(df, :id, "label", "Identifier")
+    colmetadata!(df, :id, "length", 8)
+    colmetadata!(df, :x, "scale", 1.5)
+    return df
+end
+
+function other()
+    df = Annotated(id = [2, 3], z = [true, false])
+    metadata!(df, "study", "s1")
+    colmetadata!(df, :id, "label", "Identifier")
+    colmetadata!(df, :z, "label", "Flag")
+    return df
+end
+
+metadata_text(value) = value isa String ? value : value isa Int64 ? string(value) : string(value::Float64)
+
+function render_metadata(df::Frame)
+    for key in metadatakeys(df)
+        println(Core.stdout, key, " = ", metadata_text(metadata(df, key)))
+    end
+    for (name, keys) in colmetadatakeys(df)
+        for key in keys
+            println(Core.stdout, name, ".", key, " = ", metadata_text(colmetadata(df, name, key)))
+        end
+    end
+    return render(df)
+end
+
+p_metadata_verbs() = render_metadata(transform(select(annotated(), :x => :weight, :id), :id => ByRow(float) => :id))
+p_metadata_groups() = render_metadata(combine(groupby(annotated(), :k), :x => sum => :x, :id => first => :first_id))
+p_metadata_rename() = render_metadata(rename(subset(annotated(), :x => ByRow(>(1.0))), :x => :y))
+p_metadata_vcat() = render_metadata(vcat(annotated(), annotated()))
+p_metadata_join() = render_metadata(outerjoin(annotated(), other(); on = :id))
+p_metadata_error() = catching(() -> render(colmetadata!(DF(a = [1]), :a, "n", 1)))
+
 const ENTRY_POINTS = (
+    (p_metadata_verbs, ()), (p_metadata_groups, ()), (p_metadata_rename, ()), (p_metadata_vcat, ()),
+    (p_metadata_join, ()), (p_metadata_error, ()),
     (p_construct, ()), (p_construct_kw, ()), (p_construct_runtime, ()), (p_construct_error, ()),
     (p_columns, ()),
     (p_select, ()), (p_select_function, ()), (p_select_scalar, ()), (p_select_multi, ()),

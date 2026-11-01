@@ -6,6 +6,8 @@ export All, AsTable, Between, ByRow, Cols, Not
 export antijoin, crossjoin, innerjoin, leftjoin, outerjoin, rightjoin, semijoin
 export combine, groupby, groupcols, groupindices, insertcols, insertcols!, rename, rename!
 export select, select!, subset, subset!, transform, transform!
+export colmetadata, colmetadata!, colmetadatakeys, deletecolmetadata!, deletemetadata!
+export emptycolmetadata!, emptymetadata!, metadata, metadata!, metadatakeys
 
 public fitcolumn
 
@@ -18,5 +20,6 @@ include("operations.jl")
 include("verbs.jl")
 include("vcat.jl")
 include("join.jl")
+include("metadata.jl")
 
 end

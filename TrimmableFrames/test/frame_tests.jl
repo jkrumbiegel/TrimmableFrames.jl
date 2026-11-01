@@ -2,13 +2,13 @@ const IntString = frametype(Int64, String)
 const Full = frametype(String, Int64, Float64, Bool; allowmissing = true)
 
 @testset "frametype" begin
-    @test IntString === Frame{Union{Vector{Int64},Vector{String}}}
+    @test IntString === Frame{Union{Vector{Int64},Vector{String}},String}
     @test Full === Frame{Union{
         Vector{String},Vector{Int64},Vector{Float64},Vector{Bool},
         Vector{Union{Missing,String}},Vector{Union{Missing,Int64}},
         Vector{Union{Missing,Float64}},Vector{Union{Missing,Bool}},
-    }}
-    @test frametype(Int64, Union{Missing,Int64}) === Frame{Union{Vector{Int64},Vector{Union{Missing,Int64}}}}
+    },String}
+    @test frametype(Int64, Union{Missing,Int64}) === Frame{Union{Vector{Int64},Vector{Union{Missing,Int64}}},String}
 end
 
 @testset "constructors" begin

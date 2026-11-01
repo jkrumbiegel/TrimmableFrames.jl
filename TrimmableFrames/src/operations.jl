@@ -130,8 +130,8 @@ function default_name(names, f::F, renamecols::Bool) where {F}
     return renamecols ? Symbol(prefix, "_", functionname(f)) : Symbol(prefix)
 end
 
-struct Context{C,S}
-    df::Frame{C}
+struct Context{C,M,S}
+    df::Frame{C,M}
     segments::S
     out::Output{C}
     renamecols::Bool
@@ -282,7 +282,7 @@ function emit!(cx::Context, target, results::Vector{R}, narrow::Bool) where {R}
     return not_a_table(cx.out.verb)
 end
 
-function emit_frames!(cx::Context, results::Vector{Frame{C}}) where {C}
+function emit_frames!(cx::Context, results::Vector{Frame{C,M}}) where {C,M}
     lengths = Int[nrow(df) for df in results]
     isempty(results) && return nothing
     combined = reduce(vcat, results)
@@ -379,6 +379,7 @@ function apply_columns!(cx::Context, names::NTuple{N,Symbol}, f::F, target::T) w
     indices = map(n -> columnindex(cx.df, n), names)
     apply = ApplyFunction(trim_safe_function(restrict(f, Val(N))), cx, resolved)
     splitsource(apply, columns(cx.df), indices)
+    record_origin!(cx.out, names, f, resolved)
     return nothing
 end
 
@@ -439,8 +440,8 @@ apply!(cx::Context, source::AsTable{Val{Names}}, f::F, target::T) where {Names,F
 apply!(cx::Context, source, f::F, target::T) where {F,T} =
     apply_vector_source!(cx, selectnames(cx.df, source), f, target)
 
-function apply_frame_function!(cx::Context{C,S}, f::F) where {C,S,F}
-    R = Core.Compiler.return_type(f, Tuple{Frame{C}})
+function apply_frame_function!(cx::Context{C,M,S}, f::F) where {C,M,S,F}
+    R = Core.Compiler.return_type(f, Tuple{Frame{C,M}})
     results = Vector{R}(undef, segmentcount(cx.segments))
     for g in eachindex(results)
         results[g] = f(segmentframe(cx.segments, cx.df, g))
@@ -462,14 +463,18 @@ end
 
 copied(cx::Context{C}, col) where {C} = (cx.copycols ? copycolumn(C, col)::C : col)::C
 
-function select_plain!(cx::Context{C,S}, name::Symbol, target::Symbol) where {C,S}
+function select_plain!(cx::Context{C,M,S}, name::Symbol, target::Symbol) where {C,M,S}
     col = column(cx.df, name)
     if cx.out.keeprows
-        return store_transformed!(cx.out, target, copied(cx, col)::C, PARENT_ROWS, Int[])
+        store_transformed!(cx.out, target, copied(cx, col)::C, PARENT_ROWS, Int[])
+        cx.out.origins[target] = name
+        return cx.out
     end
     lengths = Int[segmentlength(cx.segments, g) for g in 1:segmentcount(cx.segments)]
     ordered = (S === WholeFrame ? copied(cx, col)::C : takerows(C, col, cx.segments.rows)::C)::C
-    return store_transformed!(cx.out, target, ordered, SEGMENTED, lengths)
+    store_transformed!(cx.out, target, ordered, SEGMENTED, lengths)
+    cx.out.origins[target] = name
+    return cx.out
 end
 
 function select_many!(cx::Context{C}, names::Vector{Symbol}) where {C}
@@ -477,6 +482,7 @@ function select_many!(cx::Context{C}, names::Vector{Symbol}) where {C}
         name in cx.out.names && continue
         if cx.out.keeprows
             store!(cx.out, name, copied(cx, column(cx.df, name))::C, PARENT_ROWS, Int[])
+            cx.out.origins[name] = name
         else
             select_plain!(cx, name, name)
         end

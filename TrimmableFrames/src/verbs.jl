@@ -1,12 +1,12 @@
-function manipulate(verb::Symbol, df::Frame{C}, args::Tuple, keeprows::Bool, renamecols::Bool, copycols::Bool) where {C}
+function manipulate(verb::Symbol, df::Frame{C,M}, args::Tuple, keeprows::Bool, renamecols::Bool, copycols::Bool) where {C,M}
     out = Output{C}(verb, keeprows)
     segments = WholeFrame(nrow(df))
     run_all!(Context(df, segments, out, renamecols, copycols), args)
-    return out, segments
+    return out, segments, df
 end
 
-function finish(out::Output{C}, segments::WholeFrame) where {C}
-    return result_frame(out, aligned_columns(out, segments, target_lengths(out, segments)))
+function finish(out::Output{C}, segments::WholeFrame, df::Frame{C}) where {C}
+    return result_frame(out, aligned_columns(out, segments, target_lengths(out, segments)), df)
 end
 
 """
@@ -27,11 +27,12 @@ end
     return finish(manipulate(:combine, df, args, false, renamecols, true)...)
 end
 
-function replace_contents!(df::Frame{C}, result::Frame{C}) where {C}
+function replace_contents!(df::Frame{C,M}, result::Frame{C,M}) where {C,M}
     empty!(columnnames(df))
     append!(columnnames(df), columnnames(result))
     empty!(columns(df))
     append!(columns(df), columns(result))
+    replace_metadata!(df, result)
     return df
 end
 
@@ -58,14 +59,14 @@ function reject_dropped_rows(verb::Symbol, gd::GroupedFrame)
     end
 end
 
-function manipulate(verb::Symbol, gd::GroupedFrame{C}, args::Tuple, keeprows::Bool, renamecols::Bool, copycols::Bool) where {C}
+function manipulate(verb::Symbol, gd::GroupedFrame{C,M}, args::Tuple, keeprows::Bool, renamecols::Bool, copycols::Bool) where {C,M}
     keeprows && reject_dropped_rows(verb, gd)
     out = Output{C}(verb, keeprows)
     run_all!(Context(parent(gd), rowgroups(gd), out, renamecols, copycols), args)
     return out
 end
 
-function key_columns(gd::GroupedFrame{C}, target::Vector{Int}, keeprows::Bool) where {C}
+function key_columns(gd::GroupedFrame{C,M}, target::Vector{Int}, keeprows::Bool) where {C,M}
     df = parent(gd)
     keys = groupcols(gd)
     keeprows && return C[copycolumn(C, column(df, k))::C for k in keys]
@@ -81,11 +82,11 @@ function check_key_column(name::Symbol, aligned::Vector{C}, i::Int, keycols::Vec
     end
 end
 
-function finish(out::Output{C}, gd::GroupedFrame{C}, keepkeys::Bool) where {C}
+function finish(out::Output{C}, gd::GroupedFrame{C,M}, keepkeys::Bool) where {C,M}
     segments = rowgroups(gd)
     target = target_lengths(out, segments)
     aligned = aligned_columns(out, segments, target)
-    keepkeys || return result_frame(out, aligned)
+    keepkeys || return result_frame(out, aligned, parent(gd))
 
     keys = groupcols(gd)
     keycols = key_columns(gd, target, out.keeprows)
@@ -101,10 +102,13 @@ function finish(out::Output{C}, gd::GroupedFrame{C}, keepkeys::Bool) where {C}
             check_key_column(name, aligned, i, keycols, position)
         end
     end
-    return Frame{C}(names, cols)
+    for key in keys
+        out.origins[key] = key
+    end
+    return Frame{C,M}(names, cols, derived_metadata(parent(gd), names, out.origins))
 end
 
-function restore_parent_order(result::Frame{C}, gd::GroupedFrame{C}) where {C}
+function restore_parent_order(result::Frame{C,M}, gd::GroupedFrame{C,M}) where {C,M}
     parent_names = columnnames(parent(gd))
     ordered = Symbol[n for n in parent_names if hasproperty(result, n)]
     append!(ordered, Symbol[n for n in columnnames(result) if !(n in parent_names)])

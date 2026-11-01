@@ -30,13 +30,13 @@ segmentframe(::WholeFrame, df::Frame, ::Int) = df
 segmentframe(groups::RowGroups, df::Frame, g::Int) = take_frame(df, segmentrows(groups, g))
 
 """
-    GroupedFrame{C}
+    GroupedFrame{C,M}
 
 The result of [`groupby`](@ref): a parent frame, its grouping columns and the rows of
 each group.
 """
-struct GroupedFrame{C}
-    parent::Frame{C}
+struct GroupedFrame{C,M}
+    parent::Frame{C,M}
     cols::Vector{Symbol}
     groups::RowGroups
     rowgroup::Vector{Int}
@@ -52,10 +52,10 @@ Base.firstindex(::GroupedFrame) = 1
 Base.lastindex(gd::GroupedFrame) = length(gd)
 Base.getindex(gd::GroupedFrame, g::Integer) = segmentframe(rowgroups(gd), parent(gd), Int(g))
 Base.iterate(gd::GroupedFrame, g::Int = 1) = g > length(gd) ? nothing : (gd[g], g + 1)
-Base.eltype(::Type{GroupedFrame{C}}) where {C} = Frame{C}
+Base.eltype(::Type{GroupedFrame{C,M}}) where {C,M} = Frame{C,M}
 Base.names(gd::GroupedFrame) = names(parent(gd))
 
-function groupkeys(gd::GroupedFrame{C}) where {C}
+function groupkeys(gd::GroupedFrame{C,M}) where {C,M}
     firstrows = Int[rowgroups(gd).rows[s] for s in rowgroups(gd).starts]
     return take_frame(columns_frame(parent(gd), groupcols(gd), false), firstrows)
 end
@@ -151,7 +151,7 @@ function refine_groups(ids::Vector{Int}, oldgroups::Int, col::Vector{T}, skipmis
     return slot_refine(ids, col, Int(lo), width, oldgroups, skipmissing)
 end
 
-refine_by(df::Frame{C}, ids::Vector{Int}, oldgroups::Int, key::Symbol, skipmissing::Bool) where {C} =
+refine_by(df::Frame{C,M}, ids::Vector{Int}, oldgroups::Int, key::Symbol, skipmissing::Bool) where {C,M} =
     splitcolumn(c -> refine_groups(ids, oldgroups, c, skipmissing), C, column(df, key))::Tuple{Vector{Int},Int}
 
 """
@@ -183,7 +183,7 @@ end
 
 skipmissing_values(col::Vector{T}) where {T} = (x::nonmissingtype(T) for x in col if x !== missing)
 
-function uses_integer_order(df::Frame{C}, keys::Vector{Symbol}, skipmissing::Bool) where {C}
+function uses_integer_order(df::Frame{C,M}, keys::Vector{Symbol}, skipmissing::Bool) where {C,M}
     isempty(keys) && return false
     slots = Int128(1)
     limit = 2 * Int128(nrow(df))
@@ -199,7 +199,7 @@ end
 stable_order(::Type{C}, col, rows::Vector{Int}) where {C} =
     splitcolumn(c -> sortperm(c[rows]; alg = MergeSort), C, col)::Vector{Int}
 
-function sorted_group_order(df::Frame{C}, keys::Vector{Symbol}, firstrows::Vector{Int}) where {C}
+function sorted_group_order(df::Frame{C,M}, keys::Vector{Symbol}, firstrows::Vector{Int}) where {C,M}
     order = collect(1:length(firstrows))
     for key in reverse(keys)
         order = order[stable_order(C, column(df, key), firstrows[order])]
@@ -251,7 +251,7 @@ the keys with `missing` last, `sort=false` keeps the order of first appearance a
 `sort=nothing` is the order of first appearance, except that all-integer keys with a
 narrow range come out sorted.
 """
-function groupby(df::Frame{C}, cols; sort::Union{Bool,Nothing} = nothing, skipmissing::Bool = false) where {C}
+function groupby(df::Frame{C,M}, cols; sort::Union{Bool,Nothing} = nothing, skipmissing::Bool = false) where {C,M}
     keys = selectnames(df, cols)
     allunique(keys) || throw(ArgumentError("duplicate column names selected"))
 
@@ -267,5 +267,5 @@ function groupby(df::Frame{C}, cols; sort::Union{Bool,Nothing} = nothing, skipmi
         position = invperm(order)
         ids = Int[id == 0 ? 0 : position[id] for id in ids]
     end
-    return GroupedFrame{C}(df, keys, rows_by_group(ids, ngroups), ids)
+    return GroupedFrame{C,M}(df, keys, rows_by_group(ids, ngroups), ids)
 end

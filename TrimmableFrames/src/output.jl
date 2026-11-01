@@ -20,12 +20,14 @@ struct Output{C}
     shapes::Vector{ResultShape}
     lengths::Vector{Vector{Int}}
     transformed::Vector{Symbol}
+    origins::Dict{Symbol,Symbol}
 end
 
 Output{C}(verb::Symbol, keeprows::Bool) where {C} =
-    Output{C}(verb, keeprows, Symbol[], C[], ResultShape[], Vector{Int}[], Symbol[])
+    Output{C}(verb, keeprows, Symbol[], C[], ResultShape[], Vector{Int}[], Symbol[], Dict{Symbol,Symbol}())
 
 function store!(out::Output{C}, name::Symbol, col, shape::ResultShape, lengths::Vector{Int}) where {C}
+    delete!(out.origins, name)
     i = findfirst(==(name), out.names)
     if i === nothing
         push!(out.names, name)
@@ -102,4 +104,5 @@ function aligned_columns(out::Output{C}, segments, target::Vector{Int}) where {C
     return aligned
 end
 
-result_frame(out::Output{C}, cols::Vector{C}) where {C} = Frame{C}(out.names, cols)
+result_frame(out::Output{C}, cols::Vector{C}, df::Frame{C,M}) where {C,M} =
+    Frame{C,M}(out.names, cols, derived_metadata(df, out.names, out.origins))

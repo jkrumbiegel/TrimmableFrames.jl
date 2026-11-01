@@ -205,11 +205,11 @@ function vcat_names(frames::Vector{<:Frame}, cols::AbstractVector)
     return Symbol[Symbol(c) for c in cols]
 end
 
-function source_column(frames::Vector{Frame{C}}, source::Symbol, ::Type{C}) where {C}
+function source_column(frames::Vector{Frame{C,M}}, source::Symbol, ::Type{C}) where {C,M}
     return source_labels(frames, collect(1:length(frames)), C, source)
 end
 
-function source_labels(frames::Vector{Frame{C}}, labels::AbstractVector, ::Type{C}, name::Symbol) where {C}
+function source_labels(frames::Vector{Frame{C,M}}, labels::AbstractVector, ::Type{C}, name::Symbol) where {C,M}
     if length(labels) != length(frames)
         throw(ArgumentError(string("got ", length(labels), " source labels for ", length(frames), " frames")))
     end
@@ -241,15 +241,15 @@ function check_source_name(names::Vector{Symbol}, name::Symbol)
     end
 end
 
-function column_sources(frames::Vector{Frame{C}}, name::Symbol, lengths::Vector{Int}) where {C}
+function column_sources(frames::Vector{Frame{C,M}}, name::Symbol, lengths::Vector{Int}) where {C,M}
     present = Bool[hasproperty(df, name) for df in frames]
     pieces = C[column(df, name) for df in frames if hasproperty(df, name)]
     return ColumnSources{C}(name, pieces, lengths, present)
 end
 
-function vcat_frames(frames::Vector{Frame{C}}, cols, source) where {C}
-    kept = Frame{C}[df for df in frames if ncol(df) > 0]
-    isempty(kept) && return Frame{C}()
+function vcat_frames(frames::Vector{Frame{C,M}}, cols, source) where {C,M}
+    kept = Frame{C,M}[df for df in frames if ncol(df) > 0]
+    isempty(kept) && return Frame{C,M}()
 
     names = vcat_names(kept, cols)
     outcols = C[]
@@ -258,12 +258,12 @@ function vcat_frames(frames::Vector{Frame{C}}, cols, source) where {C}
         push!(outcols, concat_column(column_sources(kept, name, lengths))::C)
     end
     add_source!(names, outcols, kept, source, C)
-    return Frame{C}(names, outcols)
+    return Frame{C,M}(names, outcols, stacked_metadata(frames, names))
 end
 
-function Base.vcat(frames::Vararg{Frame{C},N}; cols = :setequal, source = nothing) where {C,N}
-    return vcat_frames(Frame{C}[frames...], cols, source)
+function Base.vcat(frames::Vararg{Frame{C,M},N}; cols = :setequal, source = nothing) where {C,M,N}
+    return vcat_frames(Frame{C,M}[frames...], cols, source)
 end
 
-Base.reduce(::typeof(vcat), frames::AbstractVector{Frame{C}}; cols = :setequal, source = nothing) where {C} =
-    vcat_frames(convert(Vector{Frame{C}}, frames), cols, source)
+Base.reduce(::typeof(vcat), frames::AbstractVector{Frame{C,M}}; cols = :setequal, source = nothing) where {C,M} =
+    vcat_frames(convert(Vector{Frame{C,M}}, frames), cols, source)

@@ -4,7 +4,7 @@ end
 
 module TFSide
 using TrimmableFrames, Statistics
-const DataFrame = frametype(String, Int64, Float64, Bool; allowmissing = true)
+const DataFrame = frametype(String, Int64, Float64, Bool; allowmissing = true, metadata = (String, Int64, Float64))
 end
 
 canonical(df::DFSide.DataFrames.AbstractDataFrame) =

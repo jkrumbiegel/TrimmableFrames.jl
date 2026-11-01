@@ -48,6 +48,12 @@ cannot copy bytes into a `Vector{UInt8}` directly. Pass them through an exported
 instead, 8 bytes per call as an `Int64`. `test/compile/Programs.jl` has this as `reset_input`,
 `push_word` and `read_input`, and `test/compile/transfer.mjs` is the JavaScript side.
 
+## Known issue
+
+The test executable built with `juliac` passes the verifier and then crashes at startup, before
+any program code runs. See "Known issues" in the [TrimmableFrames](../TrimmableFrames/README.md)
+README. Its output matched native output in an earlier build of the same reader.
+
 ## Tests
 
 `test/runtests.jl` is the native suite, and `test/compile/runtests.jl` needs WasmCodegen.jl

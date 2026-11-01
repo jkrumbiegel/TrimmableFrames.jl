@@ -1,15 +1,23 @@
-"""
-    Frame{C}
+struct Metadata{M}
+    table::Dict{String,M}
+    columns::Dict{Symbol,Dict{String,M}}
+end
 
-A column table whose columns are `Vector`s of the types in the union `C`. Column names,
-their number and which member of `C` each column has are run-time data. Use
-[`frametype`](@ref) to build the type.
+Metadata{M}() where {M} = Metadata{M}(Dict{String,M}(), Dict{Symbol,Dict{String,M}}())
+
 """
-struct Frame{C}
+    Frame{C,M}
+
+A column table whose columns are `Vector`s of the types in the union `C`, with metadata
+values of the types in the union `M`. Column names, their number, which member of `C` each
+column has and the metadata keys are run-time data. Use [`frametype`](@ref) to build the type.
+"""
+struct Frame{C,M}
     names::Vector{Symbol}
     cols::Vector{C}
+    metadata::Metadata{M}
 
-    function Frame{C}(names::Vector{Symbol}, cols::Vector{C}) where {C}
+    function Frame{C,M}(names::Vector{Symbol}, cols::Vector{C}, metadata::Metadata{M} = Metadata{M}()) where {C,M}
         if length(names) != length(cols)
             throw(ArgumentError("got $(length(cols)) columns but $(length(names)) names"))
         end
@@ -21,29 +29,40 @@ struct Frame{C}
                 throw(DimensionMismatch(string("column :", names[i], " has length ", len, ", expected ", expected)))
             end
         end
-        return new{C}(names, cols)
+        return new{C,M}(names, cols, metadata)
     end
 end
 
 """
-    frametype(T...; allowmissing=false)
+    frametype(T...; allowmissing=false, metadata=String)
 
 The `Frame` type whose columns may have the element types `T...`. With
 `allowmissing=true`, `Union{Missing,T}` is allowed for each `T` too. Single element types
-can also be listed as `Union{Missing,T}` directly.
+can also be listed as `Union{Missing,T}` directly. `metadata` is the concrete type of
+metadata values, or a tuple of them.
 
 ```julia
 const DataFrame = frametype(String, Int64, Float64, Bool; allowmissing=true)
 df = DataFrame(a=1:3, b=["x", "y", "z"])
 ```
 """
-function frametype(types...; allowmissing::Bool = false)
+function frametype(types...; allowmissing::Bool = false, metadata = String)
     all_types = allowmissing ? (types..., map(T -> Union{Missing,T}, types)...) : types
-    return Frame{Union{map(T -> Vector{T}, all_types)...}}
+    return Frame{Union{map(T -> Vector{T}, all_types)...},metadata_union(metadata)}
+end
+
+metadata_union(T::Type) = metadata_union((T,))
+
+function metadata_union(types::Tuple)
+    for T in types
+        isconcretetype(T) || throw(ArgumentError(string("metadata types must be concrete, got ", T)))
+    end
+    return Union{types...}
 end
 
 columnnames(df::Frame) = getfield(df, :names)
 columns(df::Frame) = getfield(df, :cols)
+frame_metadata(df::Frame) = getfield(df, :metadata)
 
 """
     columnunion(FrameType)
@@ -52,7 +71,7 @@ The union of allowed column types. `columnunion(DF)[[1, 2], ["x", "y"]]` is a co
 for `DF(cols, names)` whose elements keep their type through compilation.
 """
 columnunion(::Frame{C}) where {C} = C
-columnunion(::Type{Frame{C}}) where {C} = C
+columnunion(::Type{<:Frame{C}}) where {C} = C
 
 const ColumnRef = Union{Symbol,AbstractString,Integer}
 
@@ -83,7 +102,7 @@ end
 column(df::Frame, ref::ColumnRef) = columns(df)[columnindex(df, ref)]
 
 ncol(df::Frame) = length(columnnames(df))
-nrow(df::Frame{C}) where {C} = ncol(df) == 0 ? 0 : columnlength(C, columns(df)[1])
+nrow(df::Frame{C,M}) where {C,M} = ncol(df) == 0 ? 0 : columnlength(C, columns(df)[1])
 Base.size(df::Frame) = (nrow(df), ncol(df))
 Base.size(df::Frame, dim::Integer) = size(df)[dim]
 Base.names(df::Frame) = String[string(n) for n in columnnames(df)]
@@ -110,11 +129,11 @@ constructor_rows(values::Tuple) =
 to_constructor_column(::Type{C}, name, v::AbstractVector, n, copycols, verb) where {C} = to_column(C, verb, name, v, copycols)
 to_constructor_column(::Type{C}, name, x, n, copycols, verb) where {C} = fitcolumn(C, verb, name, fill(x, n), false)::C
 
-function fromvalues(::Type{Frame{C}}, names::Vector{Symbol}, values::Tuple, copycols::Bool) where {C}
+function fromvalues(::Type{Frame{C,M}}, names::Vector{Symbol}, values::Tuple, copycols::Bool) where {C,M}
     n = constructor_rows(values)
     cols = C[]
     append_columns!(cols, names, 1, values, n, copycols, C)
-    return Frame{C}(names, cols)
+    return Frame{C,M}(names, cols)
 end
 
 append_columns!(cols, names, i, ::Tuple{}, n, copycols, ::Type{C}) where {C} = cols
@@ -123,44 +142,45 @@ function append_columns!(cols, names, i, values::Tuple, n, copycols, ::Type{C}) 
     return append_columns!(cols, names, i + 1, Base.tail(values), n, copycols, C)
 end
 
-function (::Type{Frame{C}})(; copycols::Bool = true, kwargs...) where {C}
-    isempty(kwargs) && return Frame{C}(Symbol[], C[])
+function (::Type{Frame{C,M}})(; copycols::Bool = true, kwargs...) where {C,M}
+    isempty(kwargs) && return Frame{C,M}(Symbol[], C[])
     nt = values(kwargs)
-    return fromvalues(Frame{C}, Symbol[keys(nt)...], Tuple(nt), copycols)
+    return fromvalues(Frame{C,M}, Symbol[keys(nt)...], Tuple(nt), copycols)
 end
 
-function (::Type{Frame{C}})(pairs::Vararg{Pair,N}; copycols::Bool = true) where {C,N}
-    return fromvalues(Frame{C}, Symbol[map(p -> Symbol(p.first), pairs)...], map(last, pairs), copycols)
+function (::Type{Frame{C,M}})(pairs::Vararg{Pair,N}; copycols::Bool = true) where {C,M,N}
+    return fromvalues(Frame{C,M}, Symbol[map(p -> Symbol(p.first), pairs)...], map(last, pairs), copycols)
 end
 
-function (::Type{Frame{C}})(nt::NamedTuple; copycols::Bool = true) where {C}
-    return fromvalues(Frame{C}, Symbol[keys(nt)...], Tuple(nt), copycols)
+function (::Type{Frame{C,M}})(nt::NamedTuple; copycols::Bool = true) where {C,M}
+    return fromvalues(Frame{C,M}, Symbol[keys(nt)...], Tuple(nt), copycols)
 end
 
-function (::Type{Frame{C}})(pairs::AbstractVector{<:Pair}; copycols::Bool = true) where {C}
+function (::Type{Frame{C,M}})(pairs::AbstractVector{<:Pair}; copycols::Bool = true) where {C,M}
     names = Symbol[Symbol(p.first) for p in pairs]
     cols = C[]
     for (i, p) in enumerate(pairs)
         push!(cols, to_column(C, :constructor, names[i], p.second, copycols)::C)
     end
-    return Frame{C}(names, cols)
+    return Frame{C,M}(names, cols)
 end
 
-function (::Type{Frame{C}})(values::AbstractVector, names::AbstractVector; copycols::Bool = true) where {C}
+function (::Type{Frame{C,M}})(values::AbstractVector, names::AbstractVector; copycols::Bool = true) where {C,M}
     symbols = Symbol[Symbol(n) for n in names]
     cols = C[]
     for (i, v) in enumerate(values)
         push!(cols, to_column(C, :constructor, symbols[i], v, copycols)::C)
     end
-    return Frame{C}(symbols, cols)
+    return Frame{C,M}(symbols, cols)
 end
 
-(::Type{Frame{C}})(df::Frame{C}) where {C} = copy(df)
+(::Type{Frame{C,M}})(df::Frame{C,M}) where {C,M} = copy(df)
 
-Base.copy(df::Frame{C}) where {C} = Frame{C}(copy(columnnames(df)), C[copycolumn(C, c)::C for c in columns(df)])
+Base.copy(df::Frame{C,M}) where {C,M} =
+    Frame{C,M}(copy(columnnames(df)), C[copycolumn(C, c)::C for c in columns(df)], copy(frame_metadata(df)))
 
-function take_frame(df::Frame{C}, rows::AbstractVector{Int}) where {C}
-    return Frame{C}(copy(columnnames(df)), C[takerows(C, c, rows)::C for c in columns(df)])
+function take_frame(df::Frame{C,M}, rows::AbstractVector{Int}) where {C,M}
+    return Frame{C,M}(copy(columnnames(df)), C[takerows(C, c, rows)::C for c in columns(df)], copy(frame_metadata(df)))
 end
 
 Base.first(df::Frame, n::Integer) = take_frame(df, 1:min(n, nrow(df)))
@@ -170,24 +190,24 @@ rowindices(df::Frame, rows::AbstractVector{Bool}) = findall(rows)
 rowindices(df::Frame, rows::AbstractVector{<:Integer}) = convert(Vector{Int}, rows)
 rowindices(df::Frame, ::Colon) = 1:nrow(df)
 
-function columns_frame(df::Frame{C}, names::Vector{Symbol}, copied::Bool) where {C}
+function columns_frame(df::Frame{C,M}, names::Vector{Symbol}, copied::Bool) where {C,M}
     cols = C[column(df, n) for n in names]
-    return Frame{C}(names, copied ? C[copycolumn(C, c)::C for c in cols] : cols)
+    return Frame{C,M}(names, copied ? C[copycolumn(C, c)::C for c in cols] : cols, selected_metadata(df, names))
 end
 
 Base.getindex(df::Frame, ::typeof(!), ref::ColumnRef) = column(df, ref)
 Base.getindex(df::Frame, ::typeof(!), sel) = columns_frame(df, selectnames(df, sel), false)
-Base.getindex(df::Frame{C}, ::Colon, ref::ColumnRef) where {C} = copycolumn(C, column(df, ref))::C
+Base.getindex(df::Frame{C,M}, ::Colon, ref::ColumnRef) where {C,M} = copycolumn(C, column(df, ref))::C
 Base.getindex(df::Frame, ::Colon, sel) = columns_frame(df, selectnames(df, sel), true)
 Base.getindex(df::Frame, rows::AbstractVector, ::Colon) = take_frame(df, rowindices(df, rows))
-Base.getindex(df::Frame{C}, rows::AbstractVector, ref::ColumnRef) where {C} =
+Base.getindex(df::Frame{C,M}, rows::AbstractVector, ref::ColumnRef) where {C,M} =
     takerows(C, column(df, ref), rowindices(df, rows))::C
 Base.getindex(df::Frame, rows::AbstractVector, sel) =
     take_frame(columns_frame(df, selectnames(df, sel), false), rowindices(df, rows))
-Base.getindex(df::Frame{C}, row::Integer, ref::ColumnRef) where {C} =
+Base.getindex(df::Frame{C,M}, row::Integer, ref::ColumnRef) where {C,M} =
     splitcolumn(c -> c[row], C, column(df, ref))
 
-function check_length(df::Frame{C}, name::Symbol, col) where {C}
+function check_length(df::Frame{C,M}, name::Symbol, col) where {C,M}
     if ncol(df) > 0 && columnlength(C, col)::Int != nrow(df)
         throw(ArgumentError(string(
             "New columns must have the same length as old columns: column :", name,
@@ -196,7 +216,7 @@ function check_length(df::Frame{C}, name::Symbol, col) where {C}
     end
 end
 
-function setcolumn!(df::Frame{C}, name::Symbol, value, verb::Symbol) where {C}
+function setcolumn!(df::Frame{C,M}, name::Symbol, value, verb::Symbol) where {C,M}
     col = fitcolumn(C, verb, name, value isa AbstractVector ? value : fill(value, nrow(df)), false)::C
     if ncol(df) == 1 && maybe_columnindex(df, name) == 1
         columns(df)[1] = col
@@ -222,7 +242,7 @@ insert_position(df::Frame, at::Integer, after::Bool) = Int(at) + after
 insert_position(df::Frame, at::ColumnRef, after::Bool) = columnindex(df, at) + after
 
 insert_next!(df::Frame, position, copycols, n, ::Tuple{}) = df
-function insert_next!(df::Frame{C}, position, copycols, n, pairs::Tuple{Any,Vararg}) where {C}
+function insert_next!(df::Frame{C,M}, position, copycols, n, pairs::Tuple{Any,Vararg}) where {C,M}
     p = first(pairs)
     name = Symbol(p.first)
     if hasproperty(df, name)
@@ -262,6 +282,7 @@ end
 
 function replace_names!(df::Frame, renamed::Vector{Symbol})
     allunique(renamed) || throw(ArgumentError("duplicate column names after renaming"))
+    rename_metadata!(df, renamed)
     copyto!(columnnames(df), renamed)
     return df
 end
@@ -281,7 +302,7 @@ rename!(f::F, df::Frame) where {F<:Function} = rename!(df, String[f(n) for n in 
 rename(df::Frame, args::Vararg{Any,N}) where {N} = rename!(copy(df), args...)
 rename(f::F, df::Frame) where {F<:Function} = rename!(f, copy(df))
 
-function frames_equal(same::F, a::Frame{C}, b::Frame{C}) where {F,C}
+function frames_equal(same::F, a::Frame{C,M}, b::Frame{C,M}) where {F,C,M}
     columnnames(a) == columnnames(b) || return false
     result = true
     for i in 1:ncol(a)
@@ -295,8 +316,8 @@ function frames_equal(same::F, a::Frame{C}, b::Frame{C}) where {F,C}
     return result
 end
 
-Base.:(==)(a::Frame{C}, b::Frame{C}) where {C} = frames_equal(==, a, b)
-Base.isequal(a::Frame{C}, b::Frame{C}) where {C} = frames_equal(isequal, a, b)::Bool
+Base.:(==)(a::Frame{C,M}, b::Frame{C,M}) where {C,M} = frames_equal(==, a, b)
+Base.isequal(a::Frame{C,M}, b::Frame{C,M}) where {C,M} = frames_equal(isequal, a, b)::Bool
 
 columntypelabel(::Type{C}, col) where {C} = splitcolumn(c -> shortlabel(eltype(c)), C, col)::String
 shortlabel(::Type{T}) where {T} = Missing <: T ? string(typelabel(nonmissingtype(T)), "?") : typelabel(T)
@@ -313,7 +334,7 @@ end
 
 pad(s::String, width::Int) = string(s, repeated(' ', width - length(s)))
 
-function Base.show(io::IO, df::Frame{C}) where {C}
+function Base.show(io::IO, df::Frame{C,M}) where {C,M}
     cols = columns(df)
     headers = String[string(n) for n in columnnames(df)]
     types = String[columntypelabel(C, c) for c in cols]

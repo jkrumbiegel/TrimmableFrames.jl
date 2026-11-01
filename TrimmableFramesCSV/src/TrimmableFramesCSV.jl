@@ -19,7 +19,7 @@ give `Float64`. Other mixtures throw an `ArgumentError`, and a type outside the 
 of `DF` throws a `ColumnTypeError`. `strings` lists columns to keep as text, for values such
 as `01234`.
 """
-function readcsv(::Type{Frame{C}}, source::AbstractString; delim::Char = ',', strings::Vector{Symbol} = Symbol[]) where {C}
+function readcsv(::Type{Frame{C,M}}, source::AbstractString; delim::Char = ',', strings::Vector{Symbol} = Symbol[]) where {C,M}
     src = String(source)
     table = tokenize(src, delimiter_byte(delim))
     names = unique_names(table)
@@ -29,10 +29,10 @@ function readcsv(::Type{Frame{C}}, source::AbstractString; delim::Char = ',', st
     for col in 1:table.width
         push!(cols, read_column(C, table, col, names[col], names[col] in strings))
     end
-    return Frame{C}(names, cols)
+    return Frame{C,M}(names, cols)
 end
 
-readcsv(::Type{Frame{C}}, bytes::Vector{UInt8}; delim::Char = ',', strings::Vector{Symbol} = Symbol[]) where {C} =
-    readcsv(Frame{C}, String(copy(bytes)); delim, strings)
+readcsv(::Type{Frame{C,M}}, bytes::Vector{UInt8}; delim::Char = ',', strings::Vector{Symbol} = Symbol[]) where {C,M} =
+    readcsv(Frame{C,M}, String(copy(bytes)); delim, strings)
 
 end
