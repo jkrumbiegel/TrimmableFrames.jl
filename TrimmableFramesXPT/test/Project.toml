@@ -1,0 +1,12 @@
+[deps]
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+MappedArrays = "dbb5928d-eab1-5f90-85c2-b9b0edb7c900"
+ReadStatTables = "52522f7a-9570-4e34-8ac6-c005c74d4b84"
+Supposition = "5a0628fe-1738-4658-9b6d-0b7605a9755b"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+TrimmableFrames = "928ec15d-74b1-4d86-a99d-73c5a13020bf"
+TrimmableFramesXPT = "a860d955-0551-4f8e-a75e-bdfd8fac9566"
+
+[sources]
+TrimmableFrames = {path = "../../TrimmableFrames"}
+TrimmableFramesXPT = {path = ".."}

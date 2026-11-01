@@ -1,0 +1,12 @@
+[deps]
+JuliaC = "acedd4c2-ced6-4a15-accc-2607eb759ba2"
+NodeJS_24_jll = "30a2228f-09fe-513d-9563-0d10bd40449a"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+TrimmableFrames = "928ec15d-74b1-4d86-a99d-73c5a13020bf"
+TrimmableFramesXPT = "a860d955-0551-4f8e-a75e-bdfd8fac9566"
+WasmCodegen = "5b0f1d7e-3c2a-4e8b-9a61-7d2f4c8e1a93"
+
+[sources]
+TrimmableFrames = {path = "../../../TrimmableFrames"}
+TrimmableFramesXPT = {path = "../.."}
+WasmCodegen = {path = "../../../../WasmCodegen.jl"}

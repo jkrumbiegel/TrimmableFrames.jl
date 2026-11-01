@@ -7,6 +7,8 @@ Packages for working with tabular data in code compiled with `juliac --trim=safe
   DataFrames.jl.
 - [TrimmableFramesCSV](TrimmableFramesCSV/README.md): reads CSV text with a schema found at run
   time into those frames.
+- [TrimmableFramesXPT](TrimmableFramesXPT/README.md): reads SAS transport files into those
+  frames, with labels and formats as metadata.
 
 Install a package from its subdirectory:
 
@@ -15,8 +17,8 @@ import Pkg
 Pkg.add(url = "https://github.com/jkrumbiegel/TrimmableFrames.jl", subdir = "TrimmableFrames")
 ```
 
-The packages are not registered, so `TrimmableFramesCSV` has to be added together with
-`TrimmableFrames`:
+The packages are not registered, so `TrimmableFramesCSV` and `TrimmableFramesXPT` have to be
+added together with `TrimmableFrames`:
 
 ```julia
 url = "https://github.com/jkrumbiegel/TrimmableFrames.jl"
