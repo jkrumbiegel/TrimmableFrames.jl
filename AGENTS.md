@@ -2,7 +2,7 @@
 
 ## Layout
 
-- Each package lives in its own top-level directory with its own `Project.toml`, `src` and `test`. Paths below are relative to `TrimmableFrames/`.
+- Each package lives in its own top-level directory with its own `Project.toml`, `src` and `test`. Paths below are relative to the package directory, and `TrimmableFramesCSV/` has the same `test/compile` setup (about 2 minutes).
 
 ## Testing
 

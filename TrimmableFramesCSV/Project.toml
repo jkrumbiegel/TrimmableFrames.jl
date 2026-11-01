@@ -1,0 +1,14 @@
+name = "TrimmableFramesCSV"
+uuid = "4b789812-c8c8-44de-9e7b-cf5aaceac3e5"
+version = "0.1.0"
+authors = ["Julius Krumbiegel <julius.krumbiegel@gmail.com>"]
+
+[deps]
+TrimmableFrames = "928ec15d-74b1-4d86-a99d-73c5a13020bf"
+
+[sources]
+TrimmableFrames = {path = "../TrimmableFrames"}
+
+[compat]
+TrimmableFrames = "0.1"
+julia = "1.13"

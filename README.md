@@ -5,6 +5,8 @@ Packages for working with tabular data in code compiled with `juliac --trim=safe
 
 - [TrimmableFrames](TrimmableFrames/README.md): data frames with the verbs and mini-language of
   DataFrames.jl.
+- [TrimmableFramesCSV](TrimmableFramesCSV/README.md): reads CSV text with a schema found at run
+  time into those frames.
 
 Install a package from its subdirectory:
 

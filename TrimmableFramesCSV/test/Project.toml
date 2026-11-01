@@ -1,0 +1,11 @@
+[deps]
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Supposition = "5a0628fe-1738-4658-9b6d-0b7605a9755b"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+TrimmableFrames = "928ec15d-74b1-4d86-a99d-73c5a13020bf"
+TrimmableFramesCSV = "4b789812-c8c8-44de-9e7b-cf5aaceac3e5"
+
+[sources]
+TrimmableFrames = {path = "../../TrimmableFrames"}
+TrimmableFramesCSV = {path = ".."}
