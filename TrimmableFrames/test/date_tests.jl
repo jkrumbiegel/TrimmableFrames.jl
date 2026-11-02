@@ -93,6 +93,26 @@ TrimmableFrames.expected_types(::ByRow{Type{Date}}, ::Val{1}) = ((DateTime,),)
             ByRow{TrimmableFrames.Restricted{Type{Date},Tuple{DateTime}}}
     end
 
+    @testset "cell text is the same as string" begin
+        @test TrimmableFrames.celltext(Date(-1, 3, 4)) == string(Date(-1, 3, 4))
+        @test TrimmableFrames.celltext(Date(12345, 1, 1)) == string(Date(12345, 1, 1))
+        @test TrimmableFrames.celltext(Time(0, 0, 0, 0, 0, 1)) == "00:00:00.000000001"
+        @test TrimmableFrames.celltext(DateTime(2021, 1, 1, 0, 0, 0, 5)) == "2021-01-01T00:00:00.005"
+
+        @check db = false max_examples = 500 function same_text(
+                days = Data.Integers(-800_000, 3_000_000),
+                milliseconds = Data.Integers(0, 86_399_999),
+                nanoseconds = Data.Integers(0, 999_999),
+            )
+            date = Date(1960) + Day(days)
+            stamp = DateTime(date) + Millisecond(milliseconds)
+            clock = Time(Nanosecond(Int64(milliseconds) * 1_000_000 + nanoseconds))
+            TrimmableFrames.celltext(date) == string(date) &&
+                TrimmableFrames.celltext(stamp) == string(stamp) &&
+                TrimmableFrames.celltext(clock) == string(clock)
+        end
+    end
+
     @testset "errors" begin
         @test_throws "column :d" frametype(Int64)(d = [Date(2024)])
         @test_throws "element type Date, which is not among the allowed column types (Int64)" frametype(Int64)(d = [Date(2024)])

@@ -322,7 +322,7 @@ Base.isequal(a::Frame{C,M}, b::Frame{C,M}) where {C,M} = frames_equal(isequal, a
 columntypelabel(::Type{C}, col) where {C} = splitcolumn(c -> shortlabel(eltype(c)), C, col)::String
 shortlabel(::Type{T}) where {T} = Missing <: T ? string(typelabel(nonmissingtype(T)), "?") : typelabel(T)
 
-cellstring(::Type{C}, col, row::Int) where {C} = splitcolumn(c -> string(c[row]), C, col)::String
+cellstring(::Type{C}, col, row::Int) where {C} = splitcolumn(c -> celltext(c[row]), C, col)::String
 
 function repeated(c::Char, n::Int)
     io = IOBuffer()

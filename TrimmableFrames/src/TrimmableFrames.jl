@@ -11,8 +11,11 @@ export emptycolmetadata!, emptymetadata!, metadata, metadata!, metadatakeys
 
 public fitcolumn
 
+using Dates: Dates, Date, DateTime, Time, hour, millisecond, minute, second, yearmonthday
+
 include("columns.jl")
 include("frame.jl")
+include("celltext.jl")
 include("selectors.jl")
 include("groupedframe.jl")
 include("output.jl")
