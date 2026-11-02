@@ -87,7 +87,9 @@ const VISITS = file(
 p_dates() = render_metadata(readxpt(Dated, VISITS))
 p_dates_as_numbers() = render(readxpt(DF, VISITS))
 p_dates_pipeline() = render_metadata(combine(groupby(readxpt(Dated, VISITS), :VISITDT; sort = true), :DOSE => total => :DOSE, :CLOCK => maximum => :CLOCK))
-p_error_date_range() = catching(() -> render(readxpt(Dated, file([number("D"; format = "DATE")], [(1.0e15,)]))))
+const FAR_DATE = file([number("D"; format = "DATE")], [(1.0e15,)])
+
+p_error_date_range() = catching(() -> render(readxpt(Dated, FAR_DATE)))
 
 const ENTRY_POINTS = (
     p_dates, p_dates_as_numbers, p_dates_pipeline, p_error_date_range,
