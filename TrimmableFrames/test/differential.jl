@@ -1,10 +1,12 @@
 module DFSide
-using DataFrames, Statistics
+using DataFrames, Dates, Statistics
+const DatedFrame = DataFrame
 end
 
 module TFSide
-using TrimmableFrames, Statistics
+using TrimmableFrames, Dates, Statistics
 const DataFrame = frametype(String, Int64, Float64, Bool; allowmissing = true, metadata = (String, Int64, Float64))
+const DatedFrame = frametype(String, Int64, Float64, Date, DateTime, Time; allowmissing = true)
 end
 
 canonical(df::DFSide.DataFrames.AbstractDataFrame) =

@@ -1,5 +1,7 @@
 using Test
 using TrimmableFrames
+using Dates
+using Supposition
 
 include("differential.jl")
 
@@ -9,6 +11,7 @@ include("differential.jl")
     include("group_tests.jl")
     include("join_tests.jl")
     include("metadata_tests.jl")
+    include("date_tests.jl")
     include("property_tests.jl")
     include("branch_tests.jl")
 end

@@ -1,6 +1,7 @@
 module Programs
 
 using TrimmableFrames
+using Dates
 
 const DF = frametype(String, Int64, Float64, Bool; allowmissing = true)
 
@@ -220,7 +221,32 @@ p_metadata_vcat() = render_metadata(vcat(annotated(), annotated()))
 p_metadata_join() = render_metadata(outerjoin(annotated(), other(); on = :id))
 p_metadata_error() = catching(() -> render(colmetadata!(DF(a = [1]), :a, "n", 1)))
 
+const Dated = frametype(String, Int64, Float64, Date, DateTime, Time; allowmissing = true)
+
+dated_frame() = Dated(
+    d = [Date(2024, 3, 1), Date(2023, 1, 15), Date(2024, 3, 1), Date(2022, 7, 4)],
+    e = Union{Missing,Date}[Date(2021, 1, 1), missing, Date(2020, 6, 1), missing],
+    t = [DateTime(2024, 1, 2, 3, 4, 5), DateTime(2020), DateTime(2024, 1, 2, 3, 4, 5), DateTime(2021, 1, 1, 0, 0, 0, 5)],
+    h = [Time(1, 2, 3), Time(0), Time(23, 59, 59), Time(12, 30)],
+    x = [1.0, 2.0, 3.0, 4.0],
+)
+
+TrimmableFrames.expected_types(::ByRow{Type{Date}}, ::Val{1}) = ((DateTime,),)
+
+p_dates_construct() = render(dated_frame())
+p_dates_verbs() = render(transform(
+    subset(dated_frame(), :d => ByRow(>=(Date(2023, 1, 1)))),
+    :d => ByRow(year) => :year, :t => ByRow(Date) => :day, :d => ByRow(v -> v + Day(30)) => :due,
+))
+p_dates_groupby() = render(combine(groupby(dated_frame(), :d; sort = true), :x => sum => :x, :h => maximum => :latest))
+p_dates_groupby_missing() = render(combine(groupby(dated_frame(), :e), nrow))
+p_dates_join() = render(leftjoin(dated_frame(), Dated(d = [Date(2024, 3, 1)], y = [1]); on = :d))
+p_dates_vcat() = render(vcat(dated_frame(), Dated(d = [Date(2025, 1, 1)]); cols = :union))
+p_dates_error() = catching(() -> render(select(dated_frame(), :d => ByRow(v -> v - Date(2020)) => :n)))
+
 const ENTRY_POINTS = (
+    (p_dates_construct, ()), (p_dates_verbs, ()), (p_dates_groupby, ()), (p_dates_groupby_missing, ()),
+    (p_dates_join, ()), (p_dates_vcat, ()), (p_dates_error, ()),
     (p_metadata_verbs, ()), (p_metadata_groups, ()), (p_metadata_rename, ()), (p_metadata_vcat, ()),
     (p_metadata_join, ()), (p_metadata_error, ()),
     (p_construct, ()), (p_construct_kw, ()), (p_construct_runtime, ()), (p_construct_error, ()),

@@ -36,6 +36,8 @@ allowed column types (Bool, Float64, Int64, String, ...)
 
 ## Supported
 
+- Column types: any concrete element type, such as `Date`, `DateTime` and `Time` from Dates.
+  Tests compare them with DataFrames in the verbs, `groupby` and joins.
 - Construction: `DF(a = 1:3, b = "x")`, `DF(:a => v, "b" => w)`, `DF(pairs_vector)`,
   `DF(namedtuple)`, `DF(cols, names)`, `copycols`. Scalars are recycled.
 - Columns: `df.a`, `df[!, :a]`, `df[:, :a]`, `df[rows, cols]`, `df.a = v`, `df[!, :a] = v`,
@@ -129,6 +131,9 @@ The set of allowed types is closed, but `f` is compiled for each of them. So:
 - WasmCodegen cannot build a `NamedTuple` from values of a union type ("apply_type of types
   not known at compile time"), so `x -> (low = minimum(x),)` is rejected there when the
   column set has `Missing` variants of the column's type. juliac accepts it.
+- A constructor used as a function is compiled for every column too: `ByRow(Date)` on a
+  `String` column parses text, which is not trim-safe. Declare
+  `TrimmableFrames.expected_types(::ByRow{Type{Date}}, ::Val{1}) = ((DateTime,),)`.
 - Columns from run-time data go through `columnunion(DF)[col1, col2]`. A plain
   `[[1, 2], ["x", "y"]]` is a `Vector{Vector}`, whose elements have no concrete type.
 - More than 16 verb arguments lose the specialization on plain functions (`nrow`, `:`), which

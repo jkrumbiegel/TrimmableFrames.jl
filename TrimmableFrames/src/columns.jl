@@ -13,10 +13,18 @@ Base.showerror(io::IO, e::ColumnTypeError) = print(io, "ColumnTypeError: ", e.ms
 columnmembers(::Type{C}) where {C} = Base.uniontypes(C)
 
 # Printing a Union at run time needs reflection, so type names are built into the code.
-@generated typelabel(::Type{T}) where {T} = string(T)
+@generated typelabel(::Type{T}) where {T} = unqualified_label(T)
+
+joined_labels(types) = join((unqualified_label(T) for T in types), ", ")
+
+function unqualified_label(::Type{T}) where {T}
+    T isa Union && return string("Union{", joined_labels(Base.uniontypes(T)), "}")
+    T isa DataType && T <: Tuple && return string("Tuple{", joined_labels(fieldtypes(T)), "}")
+    return T isa DataType && isempty(T.parameters) ? string(nameof(T)) : string(T)
+end
 
 @generated function allowedlabel(::Type{C}) where {C}
-    return join((string(eltype(T)) for T in columnmembers(C)), ", ")
+    return join((unqualified_label(eltype(T)) for T in columnmembers(C)), ", ")
 end
 
 function column_type_error(verb::Symbol, name::Symbol, label::String, ::Type{C}) where {C}

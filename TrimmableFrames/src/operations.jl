@@ -73,6 +73,8 @@ end
 signature_union(signatures::Tuple) = Union{map(s -> Tuple{s...}, signatures)...}
 
 Restricted(f::F, signatures::Tuple) where {F} = Restricted{F,signature_union(signatures)}(f)
+Base.@constprop :aggressive Restricted(::Type{T}, signatures::Tuple) where {T} =
+    Restricted{Type{T},signature_union(signatures)}(T)
 
 restricted_error(f::F, ::Type{S}) where {F,S} =
     throw(ColumnTypeError(string(functionname(f), " is restricted to ", typelabel(S))))
@@ -84,7 +86,7 @@ end
 
 restrict_with(f, ::Nothing) = f
 restrict_with(f, signatures::Tuple) = Restricted(f, signatures)
-restrict_with(f::ByRow, signatures::Tuple) = ByRow(Restricted(f.f, signatures))
+Base.@constprop :aggressive restrict_with(f::ByRow, signatures::Tuple) = ByRow(Restricted(f.f, signatures))
 
 restrict(f::F, arity::Val) where {F} = restrict_with(f, expected_types(f, arity))
 
@@ -106,6 +108,7 @@ with_names(::Val{Names}, f::ByRow) where {Names} = ByRow(NamedArguments{Names}(f
 end
 
 functionname(f::F) where {F} = functionname_of(F)
+functionname(::Type{T}) where {T} = functionname_of(Type{T})
 functionname(f::ByRow) = functionname(f.f)
 functionname(f::NamedArguments) = functionname(f.f)
 functionname(f::ComposedFunction) = Symbol(functionname(f.outer), :_, functionname(f.inner))
