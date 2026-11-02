@@ -2,6 +2,7 @@ using Test
 using TrimmableFrames
 using TrimmableFramesXPT
 using Supposition
+using Dates
 import DataFrames
 import MappedArrays
 import ReadStatTables
@@ -10,6 +11,7 @@ include("builder.jl")
 using .XPTBuilder: Tagged, file, member, number, text
 
 const DF = frametype(String, Float64; allowmissing = true, metadata = (String, Int64))
+const Dated = frametype(String, Float64, Date, DateTime, Time; allowmissing = true, metadata = (String, Int64))
 const SAMPLE_DIR = joinpath(pkgdir(ReadStatTables), "data")
 
 reference(path) = ReadStatTables.readstat(path; apply_value_labels = false, inlinestring_width = 0, pool_width = typemax(Int))
@@ -22,6 +24,23 @@ reference_column(table, name) =
     [x isa AbstractString ? String(x) : x === missing ? missing : Float64(x) for x in stored_numbers(getproperty(table, Symbol(name)))]
 
 without_final_period(format::AbstractString) = chopsuffix(format, ".")
+
+seconds_of_day(t::Time) = Dates.value(t) / 1.0e9
+seconds_of_day(x) = x
+
+function agrees_with_readstat_dates(path)
+    ours = readxpt(Dated, read(path))
+    theirs = reference(path)
+    for name in names(ours)
+        column = getproperty(theirs, Symbol(name))
+        if column isa ReadStatTables.HMSCol
+            isequal(seconds_of_day.(ours[!, name]), Vector{Union{Missing,Float64}}(column.a)) || return false
+        else
+            isequal(ours[!, name], [x isa AbstractString ? String(x) : x for x in column]) || return false
+        end
+    end
+    return true
+end
 
 function write_version(path, table, version)
     ReadStatTables.metadata!(table, "file_format_version", version)
@@ -122,6 +141,93 @@ end
         @test colmetadata(grouped, :A, "label") == "Age"
     end
 
+    @testset "dates" begin
+        @testset "conversion" begin
+            variables = [
+                number("D"; format = "DATE", display_width = 9),
+                number("S"; format = "DATETIME", display_width = 20),
+                number("H"; format = "TIME", display_width = 8),
+            ]
+            rows = [(0.0, 0.0, 0.0), (-1.0, -1.0, 3661.0), (23742.0, 2.0513088e9, 86399.5)]
+            df = readxpt(Dated, file(variables, rows))
+
+            @test df.D::Vector{Date} == [Date(1960, 1, 1), Date(1959, 12, 31), Date(2025, 1, 1)]
+            @test df.S::Vector{DateTime} == [DateTime(1960), DateTime(1959, 12, 31, 23, 59, 59), DateTime(2025, 1, 1, 0, 0, 0)]
+            @test df.H::Vector{Time} == [Time(0), Time(1, 1, 1), Time(23, 59, 59, 500)]
+        end
+
+        @testset "format names ignore width and decimals" begin
+            for (format, width, decimals) in (("DATE", 9, 0), ("DATE", 11, 0), ("YYMMDD", 10, 0), ("E8601DA", 10, 0), ("MMDDYYS", 10, 0), ("YEAR", 4, 0))
+                df = readxpt(Dated, file([number("A"; format, display_width = width, decimals)], [(1.0,)]))
+                @test df.A == [Date(1960, 1, 2)]
+            end
+            for (format, width, decimals) in (("DATETIME", 22, 3), ("E8601DT", 19, 0), ("E8601DZ", 20, 0))
+                df = readxpt(Dated, file([number("A"; format, display_width = width, decimals)], [(1.0,)]))
+                @test df.A == [DateTime(1960, 1, 1, 0, 0, 1)]
+            end
+            for (format, width) in (("TIME", 8), ("TIMEAMPM", 11), ("HHMM", 5), ("HOUR", 2), ("E8601TM", 8))
+                df = readxpt(Dated, file([number("A"; format, display_width = width)], [(1.0,)]))
+                @test df.A == [Time(0, 0, 1)]
+            end
+            for format in ("BEST", "", "F", "COMMA", "DOLLAR")
+                df = readxpt(Dated, file([number("A"; format, display_width = 8)], [(1.0,)]))
+                @test df.A::Vector{Float64} == [1.0]
+            end
+        end
+
+        @testset "missing values" begin
+            df = readxpt(Dated, file([number("A"; format = "DATE")], [(1.0,), (missing,), (Tagged(UInt8('A')),)]))
+            @test isequal(df.A::Vector{Union{Missing,Date}}, [Date(1960, 1, 2), missing, missing])
+        end
+
+        @testset "fractions" begin
+            df = readxpt(Dated, file([number("A"; format = "DATE"), number("B"; format = "DATETIME")], [(1.75, 0.1234), (-0.5, 0.0006)]))
+            @test df.A == [Date(1960, 1, 2), Date(1959, 12, 31)]
+            @test df.B == [DateTime(1960, 1, 1, 0, 0, 0, 123), DateTime(1960, 1, 1, 0, 0, 0, 1)]
+        end
+
+        @testset "allowed types decide" begin
+            variables = [number("D"; format = "DATE"), number("S"; format = "DATETIME"), number("H"; format = "TIME")]
+            bytes = file(variables, [(1.0, 2.0, 3.0)])
+
+            plain = readxpt(DF, bytes)
+            @test plain.D::Vector{Float64} == [1.0]
+            @test plain.S::Vector{Float64} == [2.0]
+            @test plain.H::Vector{Float64} == [3.0]
+
+            only_date = readxpt(frametype(Float64, Date), bytes)
+            @test only_date.D::Vector{Date} == [Date(1960, 1, 2)]
+            @test only_date.S::Vector{Float64} == [2.0]
+            @test only_date.H::Vector{Float64} == [3.0]
+
+            with_missing = file([number("D"; format = "DATE")], [(missing,)])
+            @test_throws "readxpt: column :D would have element type Union{Missing, Date}" readxpt(frametype(Float64, Date), with_missing)
+        end
+
+        @testset "metadata is kept" begin
+            df = readxpt(Dated, file([number("D"; label = "Visit", format = "DATE", display_width = 9)], [(1.0,)]))
+            @test colmetadata(df, :D, "label") == "Visit"
+            @test colmetadata(df, :D, "format") == "DATE9."
+        end
+
+        @testset "verbs" begin
+            variables = [number("D"; format = "DATE", label = "Visit"), number("X")]
+            df = readxpt(Dated, file(variables, [(1.0, 1.0), (0.0, 2.0), (1.0, 4.0)]))
+            grouped = combine(groupby(df, :D; sort = true), :X => sum => :X)
+            @test grouped.D == [Date(1960, 1, 1), Date(1960, 1, 2)]
+            @test grouped.X == [2.0, 5.0]
+            @test colmetadata(grouped, :D, "label") == "Visit"
+        end
+
+        @testset "values that do not fit" begin
+            @test_throws "readxpt: column :D has the value 1.0e15, which is out of range for Date. Leave Date out of the allowed types to read this column as numbers" readxpt(Dated, file([number("D"; format = "DATE")], [(1.0e15,)]))
+            @test_throws "readxpt: column :S has the value 1.0e20, which is out of range for DateTime" readxpt(Dated, file([number("S"; format = "DATETIME")], [(1.0e20,)]))
+            @test_throws "readxpt: column :H has the value 90000.0, which is out of range for Time" readxpt(Dated, file([number("H"; format = "TIME")], [(90000.0,)]))
+            @test_throws "readxpt: column :H has the value -1.0, which is out of range for Time" readxpt(Dated, file([number("H"; format = "TIME")], [(-1.0,)]))
+            @test readxpt(DF, file([number("H"; format = "TIME")], [(90000.0,)])).H == [90000.0]
+        end
+    end
+
     @testset "errors" begin
         one_column = file([number("A")], [(1.0,)])
         @test_throws "readxpt: this is not a SAS transport file" readxpt(DF, Vector{UInt8}("a,b\n1,2\n"))
@@ -139,6 +245,25 @@ end
     @testset "same as ReadStatTables" begin
         @testset "$name" for name in ("sample.xpt", "datetime13.xpt")
             @test agrees_with_readstat(joinpath(SAMPLE_DIR, name))
+        end
+
+        @testset "dates in $name" for name in ("sample.xpt", "datetime13.xpt")
+            @test agrees_with_readstat_dates(joinpath(SAMPLE_DIR, name))
+        end
+
+        @check db = false max_examples = 100 function dates_written_by_readstat(
+                days = Data.Vectors(Data.Integers(-40_000, 40_000); min_size = 1, max_size = 12),
+                seconds = Data.Vectors(Data.Integers(-3_000_000_000, 3_000_000_000); min_size = 12, max_size = 12),
+                gaps = Data.Vectors(Data.Booleans(); min_size = 12, max_size = 12),
+            )
+            n = length(days)
+            dates = Union{Missing,Date}[gaps[i] ? missing : Date(1960) + Day(days[i]) for i in 1:n]
+            stamps = [DateTime(1960) + Second(seconds[i]) for i in 1:n]
+            path = tempname() * ".xpt"
+            ReadStatTables.writestat(path, DataFrames.DataFrame(D = dates, S = stamps))
+            agreed = agrees_with_readstat_dates(path)
+            rm(path)
+            agreed
         end
 
         @testset "long names and labels of version 8" begin

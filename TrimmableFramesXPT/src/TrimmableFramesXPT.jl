@@ -1,11 +1,13 @@
 module TrimmableFramesXPT
 
+using Dates: Date, DateTime, Day, Millisecond, Nanosecond, Time
 using TrimmableFrames: Frame, colmetadata!, fitcolumn, metadata!
 
 export readxpt
 
 include("layout.jl")
 include("numbers.jl")
+include("dates.jl")
 include("columns.jl")
 
 """
@@ -14,8 +16,10 @@ include("columns.jl")
 Reads the data set of a SAS transport file, version 5, 8 or 9, into a frame of type `DF`.
 
 Numeric variables become `Float64` columns, or `Union{Missing,Float64}` if they have missing
-values of any kind, and character variables become `String` columns. A type outside the
-allowed types of `DF` throws a `ColumnTypeError`. Labels and formats become metadata, which
+values of any kind, and character variables become `String` columns. A numeric variable with
+a SAS date, datetime or time format becomes a `Date`, `DateTime` or `Time` column if that type
+is allowed in `DF`, and stays a number otherwise. A type outside the allowed types of `DF`
+throws a `ColumnTypeError`. Labels and formats become metadata, which
 needs `String` among the allowed metadata types. Integer entries such as `storage_width` are
 set if `Int64` is allowed as well.
 """

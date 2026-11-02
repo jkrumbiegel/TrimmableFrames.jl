@@ -2,6 +2,7 @@ module Programs
 
 using TrimmableFrames
 using TrimmableFramesXPT
+using Dates
 
 include("../builder.jl")
 using .XPTBuilder: Tagged, file, member, number, text
@@ -71,7 +72,25 @@ p_error_several() = catching(() -> render(readxpt(DF, SEVERAL)))
 p_error_truncated() = catching(() -> render(readxpt(DF, SAMPLE[1:500])))
 p_error_type() = catching(() -> render(readxpt(frametype(String), SAMPLE)))
 
+const Dated = frametype(String, Float64, Date, DateTime, Time; allowmissing = true, metadata = (String, Int64))
+
+const VISITS = file(
+    [
+        number("VISITDT"; label = "Visit date", format = "DATE", display_width = 9),
+        number("STAMP"; format = "E8601DT", display_width = 19),
+        number("CLOCK"; format = "TIME", display_width = 8),
+        number("DOSE"),
+    ],
+    [(23742.0, 2.0513088e9, 3661.0, 1.0), (missing, 0.5, 86399.5, 2.0), (23742.0, -1.0, 0.0, 4.0)],
+)
+
+p_dates() = render_metadata(readxpt(Dated, VISITS))
+p_dates_as_numbers() = render(readxpt(DF, VISITS))
+p_dates_pipeline() = render_metadata(combine(groupby(readxpt(Dated, VISITS), :VISITDT; sort = true), :DOSE => total => :DOSE, :CLOCK => maximum => :CLOCK))
+p_error_date_range() = catching(() -> render(readxpt(Dated, file([number("D"; format = "DATE")], [(1.0e15,)]))))
+
 const ENTRY_POINTS = (
+    p_dates, p_dates_as_numbers, p_dates_pipeline, p_error_date_range,
     p_read, p_metadata, p_pipeline, p_labels_only,
     p_error_format, p_error_several, p_error_truncated, p_error_type,
 )
